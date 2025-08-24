@@ -1,0 +1,38 @@
+{
+  "backend": {
+    "api_url": "https://api.eldersvr.com",
+    "auth_endpoint": "/integration/auth/login",
+    "tags_endpoint": "/integration/tags",
+    "films_endpoint": "/integration/films"
+  },
+  "paths": {
+    "local_downloads": "./downloads",
+    "device_path": "/storage/emulated/0/Download/EldersVR",
+    "json_filename": "new_data.json"
+  },
+  "devices": {
+    "master_serial": "",
+    "slave_serial": ""
+  },
+  "auth": {
+    "email": "clionboarding@eldervr.com",
+    "password": "clionboarding@eldervr.com"
+  },
+  "target_path": "/storage/emulated/0/Download/EldersVR",
+  "required_files": [
+    "new_data.json"
+  ],
+  "master_requirements": [
+    "new_data.json"
+  ],
+  "slave_requirements": [
+    "new_data.json",
+    "Video/",
+    "Image/"
+  ],
+  "cli_only_operations": [
+    "transfer",
+    "sync",
+    "deploy"
+  ]
+}
