@@ -105,6 +105,18 @@ class EldersVRCLI:
             self.logger.error("Authentication failed")
             return 1
     
+    def cmd_logout(self, args) -> int:
+        """Handle logout command"""
+        if not self.config:
+            self.load_config()
+        
+        if not self.content_manager:
+            self.content_manager = ContentManager(self.config)
+        
+        self.content_manager.logout()
+        self.logger.info("Logged out successfully")
+        return 0
+    
     def cmd_list_devices(self, args) -> int:
         """Handle list devices command"""
         try:
@@ -207,7 +219,13 @@ class EldersVRCLI:
     
     def cmd_fetch_data(self, args) -> int:
         """Handle fetch data command (tags + films)"""
-        if not self.content_manager or not self.content_manager.is_authenticated():
+        if not self.config:
+            self.load_config()
+        
+        if not self.content_manager:
+            self.content_manager = ContentManager(self.config)
+        
+        if not self.content_manager.is_authenticated():
             self.logger.error("Not authenticated. Please run 'auth' command first.")
             return 1
         
@@ -554,6 +572,9 @@ class EldersVRCLI:
         auth_parser.add_argument('--email', help='Email for authentication')
         auth_parser.add_argument('--password', help='Password for authentication')
         
+        # Logout command
+        subparsers.add_parser('logout', help='Clear stored authentication')
+        
         # List devices command
         subparsers.add_parser('list-devices', help='List connected ADB devices')
         
@@ -607,6 +628,7 @@ class EldersVRCLI:
         # Route to appropriate command handler
         command_map = {
             'auth': self.cmd_auth,
+            'logout': self.cmd_logout,
             'list-devices': self.cmd_list_devices,
             'verify': self.cmd_verify,
             'fetch-data': self.cmd_fetch_data,

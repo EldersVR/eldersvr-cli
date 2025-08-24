@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
 import urllib.request
+from pathlib import Path
 
 
 class ContentManager:
@@ -21,6 +22,7 @@ class ContentManager:
         self.user_info: Optional[Dict[str, Any]] = None
         self.company_info: Optional[Dict[str, Any]] = None
         self.session = requests.Session()
+        self.token_file = os.path.expanduser("~/.eldersvr_auth_token")
         
         # Set default headers
         self.session.headers.update({
@@ -28,6 +30,9 @@ class ContentManager:
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         })
+        
+        # Load existing token if available
+        self._load_stored_token()
     
     def authenticate(self, email: str, password: str) -> bool:
         """Authenticate with EldersVR backend API"""
@@ -54,6 +59,9 @@ class ContentManager:
                     self.session.headers.update({
                         'Authorization': f'Bearer {self.auth_token}'
                     })
+                    
+                    # Store token to disk
+                    self._store_token()
                     
                     return True
             
@@ -308,6 +316,42 @@ class ContentManager:
         """Get company information"""
         return self.company_info
     
+    def _store_token(self):
+        """Store authentication token to disk"""
+        if self.auth_token and self.user_info and self.company_info:
+            token_data = {
+                "token": self.auth_token,
+                "user_info": self.user_info,
+                "company_info": self.company_info
+            }
+            try:
+                with open(self.token_file, 'w') as f:
+                    json.dump(token_data, f)
+                # Set restrictive permissions (readable only by owner)
+                os.chmod(self.token_file, 0o600)
+            except (IOError, OSError) as e:
+                print(f"Warning: Could not store auth token: {e}")
+    
+    def _load_stored_token(self):
+        """Load stored authentication token from disk"""
+        try:
+            if os.path.exists(self.token_file):
+                with open(self.token_file, 'r') as f:
+                    token_data = json.load(f)
+                
+                self.auth_token = token_data.get("token")
+                self.user_info = token_data.get("user_info")
+                self.company_info = token_data.get("company_info")
+                
+                if self.auth_token:
+                    # Update session headers with stored token
+                    self.session.headers.update({
+                        'Authorization': f'Bearer {self.auth_token}'
+                    })
+        except (IOError, json.JSONDecodeError, KeyError) as e:
+            # Ignore errors loading stored token - user will need to re-authenticate
+            pass
+    
     def logout(self):
         """Clear authentication and session data"""
         self.auth_token = None
@@ -317,3 +361,10 @@ class ContentManager:
         # Remove auth header from session
         if 'Authorization' in self.session.headers:
             del self.session.headers['Authorization']
+        
+        # Remove stored token file
+        try:
+            if os.path.exists(self.token_file):
+                os.remove(self.token_file)
+        except OSError as e:
+            print(f"Warning: Could not remove stored token: {e}")
