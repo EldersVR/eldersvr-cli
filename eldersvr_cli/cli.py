@@ -366,9 +366,9 @@ class EldersVRCLI:
         success = True
 
         try:
-            # Transfer to master (JSON only)
+            # Transfer to master (JSON + videos + images)
             if master_serial and not args.slave_only:
-                success &= self._transfer_to_slave(slave_serial, progress, args)
+                success &= self._transfer_to_master(master_serial, progress, args)
 
             # Transfer to slave (JSON + videos + images)
             if slave_serial and not args.master_only:
@@ -383,31 +383,65 @@ class EldersVRCLI:
             self.logger.error(f"Transfer failed: {e}")
             return 1
 
-    def _transfer_to_master(self, serial: str, progress: TransferProgress, json_only: bool) -> bool:
+    def _transfer_to_master(self, serial: str, progress: TransferProgress, args) -> bool:
         """Transfer data to master device"""
         json_path = f"{self.config['paths']['local_downloads']}/new_data.json"
+        videos_dir = f"{self.config['paths']['local_downloads']}/videos"
+        images_dir = f"{self.config['paths']['local_downloads']}/images"
 
-        if not os.path.exists(json_path):
-            self.logger.error("new_data.json not found")
-            progress.update_json_status(serial, 'failed')
-            return False
+        success = True
 
         self.logger.info(f"Transferring to master device {serial}...")
 
+        # Clear cache and logs first
+        self.logger.info(f"Clearing existing files on master device {serial}...")
+        if self.adb_manager.clear_cache_and_logs(serial):
+            self.logger.info("Successfully cleared existing files")
+        else:
+            self.logger.warning("Some files could not be cleared, continuing anyway...")
+
         # Create directory structure
         if not self.adb_manager.create_eldersvr_structure(serial):
-            progress.update_json_status(serial, 'failed')
             return False
 
         # Transfer JSON
-        progress.update_json_status(serial, 'in_progress')
-        if self.adb_manager.push_json(serial, json_path):
-            file_size = os.path.getsize(json_path)
-            progress.update_json_status(serial, 'completed', file_size)
-            return True
-        else:
-            progress.update_json_status(serial, 'failed')
-            return False
+        if not args.videos_only:
+            progress.update_json_status(serial, 'in_progress')
+            if self.adb_manager.push_json(serial, json_path):
+                file_size = os.path.getsize(json_path) if os.path.exists(json_path) else 0
+                progress.update_json_status(serial, 'completed', file_size)
+            else:
+                progress.update_json_status(serial, 'failed')
+                success = False
+
+        # Transfer videos
+        if not args.json_only and os.path.exists(videos_dir):
+            video_files = len([f for f in os.listdir(videos_dir) if f.endswith('.mp4')])
+            progress.update_videos_progress(serial, 0, video_files, 'in_progress')
+
+            video_success, video_total = self.adb_manager.push_videos(serial, videos_dir)
+
+            if video_success == video_total:
+                progress.update_videos_progress(serial, video_success, video_total, 'completed')
+            else:
+                progress.update_videos_progress(serial, video_success, video_total, 'failed')
+                success = False
+
+        # Transfer images
+        if not args.json_only and os.path.exists(images_dir):
+            image_files = len([f for f in os.listdir(images_dir)
+                             if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))])
+            progress.update_images_progress(serial, 0, image_files, 'in_progress')
+
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir)
+
+            if image_success == image_total:
+                progress.update_images_progress(serial, image_success, image_total, 'completed')
+            else:
+                progress.update_images_progress(serial, image_success, image_total, 'failed')
+                success = False
+
+        return success
 
     def _transfer_to_slave(self, serial: str, progress: TransferProgress, args) -> bool:
         """Transfer data to slave device"""
@@ -418,6 +452,13 @@ class EldersVRCLI:
         success = True
 
         self.logger.info(f"Transferring to slave device {serial}...")
+
+        # Clear cache and logs first
+        self.logger.info(f"Clearing existing files on slave device {serial}...")
+        if self.adb_manager.clear_cache_and_logs(serial):
+            self.logger.info("Successfully cleared existing files")
+        else:
+            self.logger.warning("Some files could not be cleared, continuing anyway...")
 
         # Create directory structure
         if not self.adb_manager.create_eldersvr_structure(serial):
