@@ -462,7 +462,9 @@ class EldersVRCLI:
             self.content_manager = ContentManager(self.config)
 
         try:
-            download_stats = self.content_manager.download_all_assets(data, parallel=parallel_mode)
+            # Get display limit from command line arguments
+            max_display_files = getattr(args, 'show_files', 3)
+            download_stats = self.content_manager.download_all_assets(data, parallel=parallel_mode, max_display_files=max_display_files)
 
             self.logger.info("Download completed!")
             self.logger.info(f"High-res videos: {download_stats['videos_high']}")
@@ -876,6 +878,8 @@ class EldersVRCLI:
                                    help='Download timeout in seconds (overrides config)')
         download_parser.add_argument('--retry-attempts', type=int, metavar='N',
                                    help='Number of retry attempts for failed downloads (overrides config)')
+        download_parser.add_argument('--show-files', type=int, metavar='N', default=3,
+                                   help='Maximum number of files to show in progress table (default: 3)')
 
         # Select devices command
         select_parser = subparsers.add_parser('select-devices', help='Select master and slave devices')

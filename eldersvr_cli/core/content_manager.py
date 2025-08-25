@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
+from ..utils import DownloadProgressTable
 
 
 class ContentManager:
@@ -237,7 +238,7 @@ class ContentManager:
         success = self.download_file(url, local_path, progress_callback=progress_callback)
         return success, file_type, os.path.basename(local_path)
     
-    def download_all_assets(self, data: Dict[str, Any], parallel: bool = True) -> Dict[str, int]:
+    def download_all_assets(self, data: Dict[str, Any], parallel: bool = True, max_display_files: int = 3) -> Dict[str, int]:
         """Download all videos, thumbnails, and tag images with optional parallel processing"""
         downloads_dir = self.config['paths']['local_downloads']
         
@@ -296,28 +297,60 @@ class ContentManager:
         download_stats['total_files'] = len(download_tasks)
         
         if parallel and len(download_tasks) > 1:
-            return self._download_assets_parallel(download_tasks, download_stats)
+            return self._download_assets_parallel(download_tasks, download_stats, max_display_files)
         else:
             return self._download_assets_sequential(download_tasks, download_stats)
     
     def _download_assets_parallel(self, download_tasks: List[Dict[str, Any]], 
-                                  download_stats: Dict[str, int]) -> Dict[str, int]:
-        """Download assets using parallel processing"""
+                                  download_stats: Dict[str, int], max_display_files: int = 3) -> Dict[str, int]:
+        """Download assets using parallel processing with table display"""
         print(f"Starting parallel downloads with {self.max_concurrent_downloads} concurrent connections...")
         print(f"Total files to download: {len(download_tasks)}")
         
-        completed_downloads = 0
+        # Initialize progress table with configurable display limit
+        progress_table = DownloadProgressTable(max_display_files=max_display_files)
         
+        # Add all downloads to progress table
+        for task in download_tasks:
+            filename = os.path.basename(task['local_path'])
+            progress_table.add_download(filename, task['file_type'], task['url'])
+        
+        # Create thread-safe progress callback
         def progress_callback(filename: str, downloaded: int, total: int):
-            """Thread-safe progress callback"""
-            if total > 0:
-                progress = (downloaded / total) * 100
-                print(f"\r[{completed_downloads + 1}/{len(download_tasks)}] {filename}: {progress:.1f}%", end='', flush=True)
+            """Thread-safe progress callback for table updates"""
+            progress_table.update_download(filename, downloaded, total, 'downloading')
+        
+        # Create enhanced download function that reports progress
+        def download_with_progress(task):
+            """Download a single file with progress reporting"""
+            filename = os.path.basename(task['local_path'])
+            try:
+                # Mark as starting
+                progress_table.update_download(filename, 0, 1, 'downloading')
+                
+                # Download the file
+                success = self.download_file(
+                    task['url'], 
+                    task['local_path'], 
+                    progress_callback=lambda fn, dl, tot: progress_callback(filename, dl, tot)
+                )
+                
+                # Mark completion
+                if success:
+                    progress_table.mark_completed(filename, success=True)
+                    return True, task['file_type'], filename
+                else:
+                    progress_table.mark_completed(filename, success=False, error="Download failed")
+                    return False, task['file_type'], filename
+                    
+            except Exception as e:
+                progress_table.mark_completed(filename, success=False, error=str(e))
+                return False, task['file_type'], filename
         
         with ThreadPoolExecutor(max_workers=self.max_concurrent_downloads) as executor:
             # Submit all download tasks
             future_to_task = {
-                executor.submit(self._download_single_file, task, progress_callback): task 
+                executor.submit(download_with_progress, task): task 
                 for task in download_tasks
             }
             
@@ -328,25 +361,22 @@ class ContentManager:
                     success, file_type, filename = future.result()
                     
                     with self._download_stats_lock:
-                        completed_downloads += 1
-                        download_stats['completed_files'] = completed_downloads
+                        download_stats['completed_files'] += 1
                         
                         if success:
                             download_stats[file_type] += 1
-                            print(f"\r✅ [{completed_downloads}/{len(download_tasks)}] {filename}")
                         else:
                             download_stats['failed_downloads'] += 1
-                            print(f"\r❌ [{completed_downloads}/{len(download_tasks)}] {filename} - FAILED")
                             
                 except Exception as e:
                     with self._download_stats_lock:
-                        completed_downloads += 1
+                        download_stats['completed_files'] += 1
                         download_stats['failed_downloads'] += 1
-                        download_stats['completed_files'] = completed_downloads
                         filename = os.path.basename(task['local_path'])
-                        print(f"\r❌ [{completed_downloads}/{len(download_tasks)}] {filename} - ERROR: {e}")
         
-        print(f"\nParallel download completed!")
+        # Show final summary
+        progress_table.finish()
+        
         return download_stats
     
     def _download_assets_sequential(self, download_tasks: List[Dict[str, Any]], 
