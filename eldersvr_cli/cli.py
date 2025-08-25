@@ -8,7 +8,7 @@ import argparse
 import sys
 import os
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from .core import ADBManager, ContentManager
 from .utils import setup_logger, get_logger, TransferProgress, print_deployment_summary
@@ -24,36 +24,166 @@ class EldersVRCLI:
         self.logger = setup_logger('eldersvr-cli')
 
     def load_config(self, config_path: str = None) -> Dict[str, Any]:
-        """Load configuration from file"""
+        """Load configuration from file with enhanced validation and logging"""
+        self.logger.info("Starting configuration loading process...")
+        
         if config_path is None:
             # Look for config in common locations
             config_locations = [
                 './eldersvr_config.json',
-                '~/.eldersvr/config.json',
+                '~/.eldersvr/config.json', 
                 '/etc/eldersvr/config.json'
             ]
-
+            
+            self.logger.info("Searching for configuration file in standard locations:")
             for location in config_locations:
+                self.logger.debug(f"  Checking: {location}")
                 expanded_path = os.path.expanduser(location)
                 if os.path.exists(expanded_path):
                     config_path = expanded_path
+                    self.logger.info(f"  ✅ Found configuration file: {expanded_path}")
                     break
+                else:
+                    self.logger.debug(f"  ❌ Not found: {expanded_path}")
 
         if config_path and os.path.exists(config_path):
+            self.logger.info(f"Attempting to load configuration from: {config_path}")
+            
+            # Verify file permissions before loading
+            if not self._verify_config_file_permissions(config_path):
+                self.logger.error(f"Configuration file permission check failed: {config_path}")
+                return self._fallback_to_default_config()
+            
             try:
                 with open(config_path, 'r') as f:
-                    self.config = json.load(f)
-                    self.logger.info(f"Loaded configuration from {config_path}")
+                    loaded_config = json.load(f)
+                    self.logger.info(f"✅ Successfully loaded configuration from {config_path}")
+                    
+                    # Merge with default config to ensure all required keys exist
+                    self.config = self._merge_with_default_config(loaded_config)
+                    
+                    # Validate the loaded configuration
+                    validation_issues = self._validate_config(self.config)
+                    if validation_issues:
+                        self.logger.warning("Configuration validation issues found:")
+                        for issue in validation_issues:
+                            self.logger.warning(f"  - {issue}")
+                    
+                    self.logger.info("Configuration summary:")
+                    self.logger.info(f"  API URL: {self.config['backend']['api_url']}")
+                    self.logger.info(f"  Device path: {self.config['paths']['device_path']}")
+                    self.logger.info(f"  Local downloads: {self.config['paths']['local_downloads']}")
+                    
                     self._initialize_managers()
                     return self.config
-            except (json.JSONDecodeError, IOError) as e:
-                self.logger.error(f"Failed to load config from {config_path}: {e}")
+                    
+            except json.JSONDecodeError as e:
+                self.logger.error(f"❌ Invalid JSON in config file {config_path}: {e}")
+                return self._fallback_to_default_config()
+            except IOError as e:
+                self.logger.error(f"❌ Failed to read config file {config_path}: {e}")
+                return self._fallback_to_default_config()
+        else:
+            if config_path:
+                self.logger.warning(f"Configuration file not found: {config_path}")
+            else:
+                self.logger.info("No configuration file found in standard locations")
+            return self._fallback_to_default_config()
 
-        # Use default configuration
+    def _verify_config_file_permissions(self, config_path: str) -> bool:
+        """Verify that configuration file can be read and written"""
+        try:
+            # Test read permissions
+            if not os.access(config_path, os.R_OK):
+                self.logger.error(f"❌ No read permission for config file: {config_path}")
+                return False
+            
+            self.logger.debug(f"✅ Read permission verified for: {config_path}")
+            
+            # Test write permissions (for potential updates)
+            if not os.access(config_path, os.W_OK):
+                self.logger.warning(f"⚠️ No write permission for config file: {config_path}")
+                self.logger.warning("Configuration updates will not be possible")
+                # Still return True as read-only config is acceptable
+            else:
+                self.logger.debug(f"✅ Write permission verified for: {config_path}")
+            
+            # Check file size (avoid loading extremely large files)
+            file_size = os.path.getsize(config_path)
+            if file_size > 1024 * 1024:  # 1MB limit
+                self.logger.error(f"❌ Configuration file too large ({file_size} bytes): {config_path}")
+                return False
+            
+            self.logger.debug(f"✅ File size check passed ({file_size} bytes)")
+            return True
+            
+        except OSError as e:
+            self.logger.error(f"❌ Error checking config file permissions: {e}")
+            return False
+
+    def _fallback_to_default_config(self) -> Dict[str, Any]:
+        """Fallback to default configuration with logging"""
+        self.logger.info("🔄 Falling back to default configuration")
         self.config = self._get_default_config()
-        self.logger.warning("Using default configuration")
+        
+        self.logger.info("Default configuration loaded:")
+        self.logger.info(f"  API URL: {self.config['backend']['api_url']}")
+        self.logger.info(f"  Device path: {self.config['paths']['device_path']}")
+        self.logger.info(f"  Local downloads: {self.config['paths']['local_downloads']}")
+        
         self._initialize_managers()
         return self.config
+
+    def _merge_with_default_config(self, loaded_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge loaded config with default to ensure all required keys exist"""
+        default_config = self._get_default_config()
+        
+        # Deep merge - loaded config overrides default
+        def deep_merge(default: dict, loaded: dict) -> dict:
+            result = default.copy()
+            for key, value in loaded.items():
+                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                    result[key] = deep_merge(result[key], value)
+                else:
+                    result[key] = value
+            return result
+        
+        merged = deep_merge(default_config, loaded_config)
+        self.logger.debug("✅ Configuration merged with defaults")
+        return merged
+
+    def _validate_config(self, config: Dict[str, Any]) -> List[str]:
+        """Validate configuration and return list of issues"""
+        issues = []
+        
+        # Required sections
+        required_sections = ['backend', 'paths', 'devices', 'auth']
+        for section in required_sections:
+            if section not in config:
+                issues.append(f"Missing required section: {section}")
+        
+        # Backend validation
+        if 'backend' in config:
+            required_backend_keys = ['api_url', 'auth_endpoint', 'tags_endpoint', 'films_endpoint']
+            for key in required_backend_keys:
+                if key not in config['backend']:
+                    issues.append(f"Missing required backend key: {key}")
+        
+        # Paths validation
+        if 'paths' in config:
+            required_path_keys = ['local_downloads', 'device_path', 'json_filename']
+            for key in required_path_keys:
+                if key not in config['paths']:
+                    issues.append(f"Missing required paths key: {key}")
+        
+        # Auth validation
+        if 'auth' in config:
+            if not config['auth'].get('email'):
+                issues.append("Missing or empty auth email")
+            if not config['auth'].get('password'):
+                issues.append("Missing or empty auth password")
+        
+        return issues
 
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""
