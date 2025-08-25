@@ -578,6 +578,9 @@ class EldersVRCLI:
                 return 1
 
             self.logger.info("Authentication successful")
+            
+            # Create credential.json for master device transfer
+            self._create_credential_json(email, password)
 
         # Step 4: Fetch data
         if not args.skip_fetch:
