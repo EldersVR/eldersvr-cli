@@ -78,18 +78,20 @@ class ProgressBar:
 
 
 class TransferProgress:
-    """Progress tracker for device transfers"""
+    """Progress tracker for device transfers with real-time text percentages"""
     
     def __init__(self):
         self.devices: Dict[str, Dict[str, Any]] = {}
+        self.last_update_time = 0
+        self.update_interval = 0.1  # Update every 100ms for real-time feel
     
     def add_device(self, serial: str, name: str = ""):
         """Add a device to track"""
         self.devices[serial] = {
             'name': name or serial,
-            'json': {'status': 'pending', 'size': 0},
-            'videos': {'status': 'pending', 'current': 0, 'total': 0, 'size': 0},
-            'images': {'status': 'pending', 'current': 0, 'total': 0, 'size': 0}
+            'json': {'status': 'pending', 'size': 0, 'start_time': None},
+            'videos': {'status': 'pending', 'current': 0, 'total': 0, 'size': 0, 'start_time': None},
+            'images': {'status': 'pending', 'current': 0, 'total': 0, 'size': 0, 'start_time': None}
         }
     
     def update_json_status(self, serial: str, status: str, size: int = 0):
@@ -97,7 +99,9 @@ class TransferProgress:
         if serial in self.devices:
             self.devices[serial]['json']['status'] = status
             self.devices[serial]['json']['size'] = size
-            self._display_progress()
+            if status == 'in_progress' and self.devices[serial]['json']['start_time'] is None:
+                self.devices[serial]['json']['start_time'] = time.time()
+            self._display_progress_realtime()
     
     def update_videos_progress(self, serial: str, current: int, total: int, status: str = 'in_progress'):
         """Update video transfer progress"""
@@ -107,7 +111,9 @@ class TransferProgress:
                 'total': total,
                 'status': status
             })
-            self._display_progress()
+            if status == 'in_progress' and self.devices[serial]['videos']['start_time'] is None:
+                self.devices[serial]['videos']['start_time'] = time.time()
+            self._display_progress_realtime()
     
     def update_images_progress(self, serial: str, current: int, total: int, status: str = 'in_progress'):
         """Update image transfer progress"""
@@ -117,43 +123,126 @@ class TransferProgress:
                 'total': total,
                 'status': status
             })
-            self._display_progress()
+            if status == 'in_progress' and self.devices[serial]['images']['start_time'] is None:
+                self.devices[serial]['images']['start_time'] = time.time()
+            self._display_progress_realtime()
     
-    def _display_progress(self):
-        """Display transfer progress for all devices"""
-        # Clear previous output
-        print("\n" * (len(self.devices) * 4 + 2))
-        print("\033[F" * (len(self.devices) * 4 + 2), end="")
+    def _display_progress_realtime(self):
+        """Display transfer progress with real-time text percentages"""
+        current_time = time.time()
         
-        print("Deploying to devices...")
+        # Throttle updates to avoid excessive flickering
+        if current_time - self.last_update_time < self.update_interval:
+            return
+        self.last_update_time = current_time
+        
+        # Clear screen and move cursor to top
+        print("\033[2J\033[H", end="")
+        
+        print("=" * 60)
+        print("ELDERSVR CONTENT DEPLOYMENT - REAL-TIME PROGRESS")
+        print("=" * 60)
+        print()
         
         for serial, device in self.devices.items():
-            print(f"├── {device['name']}")
+            print(f"[{device['name']} - {serial}]")
+            print("-" * 40)
             
-            # JSON status
-            json_status = self._get_status_symbol(device['json']['status'])
-            size_str = self._format_size(device['json']['size']) if device['json']['size'] > 0 else ""
-            print(f"│   ├── new_data.json {json_status} {size_str}")
+            # JSON transfer
+            json_info = device['json']
+            json_status = self._get_status_text(json_info['status'])
+            if json_info['status'] == 'in_progress':
+                elapsed = time.time() - json_info['start_time'] if json_info['start_time'] else 0
+                print(f"  JSON File:     {json_status} [{elapsed:.1f}s]")
+            else:
+                size_str = self._format_size(json_info['size']) if json_info['size'] > 0 else ""
+                print(f"  JSON File:     {json_status} {size_str}")
             
-            # Videos progress
+            # Videos transfer
             videos = device['videos']
             if videos['total'] > 0:
-                progress = videos['current'] / videos['total'] * 100
-                video_bar = self._create_mini_bar(videos['current'], videos['total'])
-                print(f"│   ├── videos/ {video_bar} {progress:.0f}% ({videos['current']}/{videos['total']})")
+                percent = (videos['current'] / videos['total']) * 100
+                elapsed = time.time() - videos['start_time'] if videos['start_time'] else 0
+                remaining = videos['total'] - videos['current']
+                
+                if videos['status'] == 'in_progress':
+                    # Calculate transfer speed
+                    if elapsed > 0 and videos['current'] > 0:
+                        speed = videos['current'] / elapsed
+                        eta = remaining / speed if speed > 0 else 0
+                        print(f"  Video Files:   {percent:6.2f}% ({videos['current']:3d}/{videos['total']:3d}) | Elapsed: {elapsed:.1f}s | ETA: {eta:.1f}s")
+                    else:
+                        print(f"  Video Files:   {percent:6.2f}% ({videos['current']:3d}/{videos['total']:3d}) | Starting...")
+                else:
+                    status_text = self._get_status_text(videos['status'])
+                    print(f"  Video Files:   {status_text} ({videos['current']}/{videos['total']})")
             else:
-                status_symbol = self._get_status_symbol(videos['status'])
-                print(f"│   ├── videos/ {status_symbol}")
+                print(f"  Video Files:   {self._get_status_text(videos['status'])}")
             
-            # Images progress
+            # Images transfer
             images = device['images']
             if images['total'] > 0:
-                progress = images['current'] / images['total'] * 100
-                image_bar = self._create_mini_bar(images['current'], images['total'])
-                print(f"│   └── images/ {image_bar} {progress:.0f}% ({images['current']}/{images['total']})")
+                percent = (images['current'] / images['total']) * 100
+                elapsed = time.time() - images['start_time'] if images['start_time'] else 0
+                remaining = images['total'] - images['current']
+                
+                if images['status'] == 'in_progress':
+                    # Calculate transfer speed
+                    if elapsed > 0 and images['current'] > 0:
+                        speed = images['current'] / elapsed
+                        eta = remaining / speed if speed > 0 else 0
+                        print(f"  Image Files:   {percent:6.2f}% ({images['current']:3d}/{images['total']:3d}) | Elapsed: {elapsed:.1f}s | ETA: {eta:.1f}s")
+                    else:
+                        print(f"  Image Files:   {percent:6.2f}% ({images['current']:3d}/{images['total']:3d}) | Starting...")
+                else:
+                    status_text = self._get_status_text(images['status'])
+                    print(f"  Image Files:   {status_text} ({images['current']}/{images['total']})")
             else:
-                status_symbol = self._get_status_symbol(images['status'])
-                print(f"│   └── images/ {status_symbol}")
+                print(f"  Image Files:   {self._get_status_text(images['status'])}")
+            
+            print()  # Blank line between devices
+        
+        # Show overall progress
+        self._display_overall_progress()
+    
+    def _display_overall_progress(self):
+        """Display overall transfer progress"""
+        total_files = 0
+        completed_files = 0
+        
+        for device in self.devices.values():
+            # Count JSON file
+            total_files += 1
+            if device['json']['status'] == 'completed':
+                completed_files += 1
+            
+            # Count videos
+            total_files += device['videos']['total']
+            completed_files += device['videos']['current']
+            
+            # Count images
+            total_files += device['images']['total']
+            completed_files += device['images']['current']
+        
+        if total_files > 0:
+            overall_percent = (completed_files / total_files) * 100
+            print("=" * 60)
+            print(f"OVERALL PROGRESS: {overall_percent:6.2f}% ({completed_files}/{total_files} files)")
+            print("=" * 60)
+    
+    def _get_status_text(self, status: str) -> str:
+        """Get text representation of status"""
+        status_map = {
+            'pending': '⏳ Pending      ',
+            'in_progress': '🔄 Transferring',
+            'completed': '✅ Complete    ',
+            'failed': '❌ Failed      '
+        }
+        return status_map.get(status, '❓ Unknown     ')
+    
+    def _display_progress(self):
+        """Legacy display method - redirect to real-time version"""
+        self._display_progress_realtime()
     
     def _get_status_symbol(self, status: str) -> str:
         """Get symbol for status"""

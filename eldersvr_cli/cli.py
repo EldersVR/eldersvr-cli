@@ -616,7 +616,11 @@ class EldersVRCLI:
             video_files = len([f for f in os.listdir(videos_dir) if f.endswith('.mp4')])
             progress.update_videos_progress(serial, 0, video_files, 'in_progress')
 
-            video_success, video_total = self.adb_manager.push_videos(serial, videos_dir)
+            # Create callback for real-time updates
+            def video_progress_callback(current, total):
+                progress.update_videos_progress(serial, current, total, 'in_progress')
+
+            video_success, video_total = self.adb_manager.push_videos(serial, videos_dir, video_progress_callback)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -630,7 +634,11 @@ class EldersVRCLI:
                              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))])
             progress.update_images_progress(serial, 0, image_files, 'in_progress')
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir)
+            # Create callback for real-time updates
+            def image_progress_callback(current, total):
+                progress.update_images_progress(serial, current, total, 'in_progress')
+
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
@@ -676,7 +684,11 @@ class EldersVRCLI:
             video_files = len([f for f in os.listdir(videos_dir) if f.endswith('.mp4')])
             progress.update_videos_progress(serial, 0, video_files, 'in_progress')
 
-            video_success, video_total = self.adb_manager.push_videos(serial, videos_dir)
+            # Create callback for real-time updates
+            def video_progress_callback(current, total):
+                progress.update_videos_progress(serial, current, total, 'in_progress')
+
+            video_success, video_total = self.adb_manager.push_videos(serial, videos_dir, video_progress_callback)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -690,7 +702,11 @@ class EldersVRCLI:
                              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))])
             progress.update_images_progress(serial, 0, image_files, 'in_progress')
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir)
+            # Create callback for real-time updates
+            def image_progress_callback(current, total):
+                progress.update_images_progress(serial, current, total, 'in_progress')
+
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')

@@ -469,35 +469,50 @@ class ADBManager:
             return False
 
     @CLIAccessControl.require_cli_access("transfer")
-    def push_videos(self, serial: str, local_videos_dir: str) -> Tuple[int, int]:
-        """Push all video files to device. Returns (success_count, total_count)"""
+    def push_videos(self, serial: str, local_videos_dir: str, progress_callback=None) -> Tuple[int, int]:
+        """Push all video files to device with real-time progress. Returns (success_count, total_count)"""
         if not os.path.exists(local_videos_dir):
             raise FileNotFoundError(f"Local videos directory not found: {local_videos_dir}")
 
         video_files = glob.glob(f"{local_videos_dir}/*.mp4")
         success_count = 0
+        
+        self.logger.info(f"Starting transfer of {len(video_files)} video files to {serial}")
 
-        for video_file in video_files:
+        for idx, video_file in enumerate(video_files):
             filename = os.path.basename(video_file)
             remote_path = f"{self.video_path}/{filename}"
+            file_size = os.path.getsize(video_file)
+            
+            self.logger.debug(f"Transferring {filename} ({self._format_file_size(file_size)})")
 
             try:
                 result = subprocess.run([
                     "adb", "-s", serial, "push",
                     video_file, remote_path
-                ], capture_output=True, timeout=300)  # 5 minutes timeout for large files
+                ], capture_output=True, text=True, timeout=300)  # 5 minutes timeout for large files
 
                 if result.returncode == 0:
                     success_count += 1
+                    self.logger.debug(f"✅ Successfully transferred {filename}")
+                else:
+                    self.logger.warning(f"❌ Failed to transfer {filename}: {result.stderr}")
+
+                # Update progress after each file
+                if progress_callback:
+                    progress_callback(success_count, len(video_files))
 
             except subprocess.TimeoutExpired:
+                self.logger.error(f"❌ Timeout transferring {filename}")
+                if progress_callback:
+                    progress_callback(success_count, len(video_files))
                 continue
 
         return success_count, len(video_files)
 
     @CLIAccessControl.require_cli_access("transfer")
-    def push_images(self, serial: str, local_images_dir: str) -> Tuple[int, int]:
-        """Push all image files to device. Returns (success_count, total_count)"""
+    def push_images(self, serial: str, local_images_dir: str, progress_callback=None) -> Tuple[int, int]:
+        """Push all image files to device with real-time progress. Returns (success_count, total_count)"""
         if not os.path.exists(local_images_dir):
             raise FileNotFoundError(f"Local images directory not found: {local_images_dir}")
 
@@ -509,24 +524,47 @@ class ADBManager:
             image_files.extend(glob.glob(f"{local_images_dir}/{ext.upper()}"))
 
         success_count = 0
+        
+        self.logger.info(f"Starting transfer of {len(image_files)} image files to {serial}")
 
-        for image_file in image_files:
+        for idx, image_file in enumerate(image_files):
             filename = os.path.basename(image_file)
             remote_path = f"{self.image_path}/{filename}"
+            file_size = os.path.getsize(image_file)
+            
+            self.logger.debug(f"Transferring {filename} ({self._format_file_size(file_size)})")
 
             try:
                 result = subprocess.run([
                     "adb", "-s", serial, "push",
                     image_file, remote_path
-                ], capture_output=True, timeout=60)
+                ], capture_output=True, text=True, timeout=60)
 
                 if result.returncode == 0:
                     success_count += 1
+                    self.logger.debug(f"✅ Successfully transferred {filename}")
+                else:
+                    self.logger.warning(f"❌ Failed to transfer {filename}: {result.stderr}")
+
+                # Update progress after each file  
+                if progress_callback:
+                    progress_callback(success_count, len(image_files))
 
             except subprocess.TimeoutExpired:
+                self.logger.error(f"❌ Timeout transferring {filename}")
+                if progress_callback:
+                    progress_callback(success_count, len(image_files))
                 continue
 
         return success_count, len(image_files)
+    
+    def _format_file_size(self, bytes_size: int) -> str:
+        """Format file size in human readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_size < 1024:
+                return f"{bytes_size:.1f}{unit}"
+            bytes_size /= 1024
+        return f"{bytes_size:.1f}TB"
 
     def get_device_storage_info(self, serial: str) -> Optional[Dict[str, str]]:
         """Get storage information for EldersVR directory"""
