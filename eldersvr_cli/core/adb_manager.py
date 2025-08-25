@@ -36,8 +36,8 @@ class CLIAccessControl:
 class ADBManager:
     """Manages ADB operations for EldersVR device onboarding"""
 
-    def __init__(self):
-        self.eldersvr_path = "/storage/emulated/0/Download/EldersVR"
+    def __init__(self, device_path: str = "/storage/emulated/0/Download/EldersVR"):
+        self.eldersvr_path = device_path
         self.video_path = f"{self.eldersvr_path}/Video"
         self.image_path = f"{self.eldersvr_path}/Image"
 

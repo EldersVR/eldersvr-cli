@@ -19,7 +19,7 @@ class EldersVRCLI:
 
     def __init__(self):
         self.config: Optional[Dict[str, Any]] = None
-        self.adb_manager = ADBManager()
+        self.adb_manager: Optional[ADBManager] = None
         self.content_manager: Optional[ContentManager] = None
         self.logger = setup_logger('eldersvr-cli')
 
@@ -44,6 +44,7 @@ class EldersVRCLI:
                 with open(config_path, 'r') as f:
                     self.config = json.load(f)
                     self.logger.info(f"Loaded configuration from {config_path}")
+                    self._initialize_managers()
                     return self.config
             except (json.JSONDecodeError, IOError) as e:
                 self.logger.error(f"Failed to load config from {config_path}: {e}")
@@ -51,6 +52,7 @@ class EldersVRCLI:
         # Use default configuration
         self.config = self._get_default_config()
         self.logger.warning("Using default configuration")
+        self._initialize_managers()
         return self.config
 
     def _get_default_config(self) -> Dict[str, Any]:
@@ -76,6 +78,19 @@ class EldersVRCLI:
                 "password": "clionboarding@eldervr.com"
             }
         }
+
+    def _initialize_managers(self):
+        """Initialize managers with configuration"""
+        if self.config:
+            device_path = self.config.get("paths", {}).get("device_path", "/storage/emulated/0/Download/EldersVR")
+            self.adb_manager = ADBManager(device_path)
+
+    def _ensure_managers_initialized(self):
+        """Ensure managers are initialized with config"""
+        if not self.config:
+            self.load_config()
+        if not self.adb_manager:
+            self._initialize_managers()
 
     def cmd_auth(self, args) -> int:
         """Handle authentication command"""
@@ -123,6 +138,7 @@ class EldersVRCLI:
 
     def cmd_list_devices(self, args) -> int:
         """Handle list devices command"""
+        self._ensure_managers_initialized()
         try:
             devices = self.adb_manager.get_connected_devices()
 
@@ -153,6 +169,7 @@ class EldersVRCLI:
 
     def _verify_single_device(self, serial: str) -> int:
         """Verify storage access for a single device"""
+        self._ensure_managers_initialized()
         self.logger.info(f"Verifying device {serial}...")
 
         try:
@@ -349,8 +366,7 @@ class EldersVRCLI:
 
     def cmd_transfer(self, args) -> int:
         """Handle transfer command (CLI-only)"""
-        if not self.config:
-            self.load_config()
+        self._ensure_managers_initialized()
 
         master_serial = self.config['devices']['master_serial']
         slave_serial = self.config['devices']['slave_serial']
@@ -558,9 +574,8 @@ class EldersVRCLI:
         """Handle complete deployment command (CLI-only)"""
         self.logger.info("Starting complete deployment pipeline...")
 
-        # Step 1: Load config
-        if not self.config:
-            self.load_config()
+        # Step 1: Ensure managers initialized
+        self._ensure_managers_initialized()
 
         # Step 2: Verify ADB
         if not self.adb_manager.verify_adb_available():

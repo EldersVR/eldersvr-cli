@@ -52,6 +52,15 @@ class TestCLIBasics(unittest.TestCase):
         self.assertEqual(adb_manager.video_path, '/storage/emulated/0/Download/EldersVR/Video')
         self.assertEqual(adb_manager.image_path, '/storage/emulated/0/Download/EldersVR/Image')
     
+    def test_adb_manager_custom_device_path(self):
+        """Test ADB manager initialization with custom device path"""
+        custom_path = "/sdcard/MyCustomPath"
+        adb_manager = ADBManager(custom_path)
+        
+        self.assertEqual(adb_manager.eldersvr_path, custom_path)
+        self.assertEqual(adb_manager.video_path, f"{custom_path}/Video")
+        self.assertEqual(adb_manager.image_path, f"{custom_path}/Image")
+    
     def test_content_manager_initialization(self):
         """Test content manager initialization"""
         config = get_default_config()
