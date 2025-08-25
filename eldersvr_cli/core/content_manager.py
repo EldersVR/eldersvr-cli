@@ -6,11 +6,14 @@ Handles authentication, data fetching, and content downloads
 import requests
 import json
 import os
+import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple, Callable
 from urllib.parse import urlparse
 import urllib.request
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 
 class ContentManager:
@@ -23,6 +26,18 @@ class ContentManager:
         self.company_info: Optional[Dict[str, Any]] = None
         self.session = requests.Session()
         self.token_file = os.path.expanduser("~/.eldersvr_auth_token")
+        
+        # Download configuration
+        self.download_config = config.get('download', {})
+        self.max_concurrent_downloads = self.download_config.get('max_concurrent_downloads', 4)
+        self.chunk_size = self.download_config.get('chunk_size', 8192)
+        self.timeout = self.download_config.get('timeout', 60)
+        self.retry_attempts = self.download_config.get('retry_attempts', 3)
+        self.retry_delay = self.download_config.get('retry_delay', 1.0)
+        
+        # Progress tracking
+        self._download_stats_lock = Lock()
+        self._current_downloads = 0
         
         # Set default headers
         self.session.headers.update({
@@ -161,46 +176,69 @@ class ContentManager:
         
         return new_data
     
-    def download_file(self, url: str, local_path: str, chunk_size: int = 8192) -> bool:
-        """Download a file from URL to local path"""
-        try:
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    def download_file(self, url: str, local_path: str, chunk_size: int = None, 
+                      progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """Download a file from URL to local path with retry logic"""
+        if chunk_size is None:
+            chunk_size = self.chunk_size
             
-            # Parse URL to get filename if not provided
-            if os.path.isdir(local_path):
-                filename = os.path.basename(urlparse(url).path)
-                local_path = os.path.join(local_path, filename)
-            
-            # Download with progress indication for large files
-            response = requests.get(url, stream=True, timeout=60)
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded_size = 0
-            
-            with open(local_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-                        
-                        # Print progress for large files (> 1MB)
-                        if total_size > 1024 * 1024:
-                            progress = (downloaded_size / total_size) * 100 if total_size > 0 else 0
-                            print(f"\rDownloading {os.path.basename(local_path)}: {progress:.1f}%", end='')
-            
-            if total_size > 1024 * 1024:
-                print()  # New line after progress
-            
-            return True
-            
-        except (requests.RequestException, OSError, IOError) as e:
-            print(f"Failed to download {url}: {e}")
-            return False
+        for attempt in range(self.retry_attempts):
+            try:
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                
+                # Parse URL to get filename if not provided
+                if os.path.isdir(local_path):
+                    filename = os.path.basename(urlparse(url).path)
+                    local_path = os.path.join(local_path, filename)
+                
+                # Download with progress indication for large files
+                response = requests.get(url, stream=True, timeout=self.timeout)
+                response.raise_for_status()
+                
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded_size = 0
+                filename = os.path.basename(local_path)
+                
+                with open(local_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded_size += len(chunk)
+                            
+                            # Call progress callback if provided
+                            if progress_callback:
+                                progress_callback(filename, downloaded_size, total_size)
+                            elif total_size > 1024 * 1024:  # Fallback progress for large files
+                                progress = (downloaded_size / total_size) * 100 if total_size > 0 else 0
+                                print(f"\rDownloading {filename}: {progress:.1f}%", end='')
+                
+                if total_size > 1024 * 1024 and not progress_callback:
+                    print()  # New line after progress
+                
+                return True
+                
+            except (requests.RequestException, OSError, IOError) as e:
+                if attempt < self.retry_attempts - 1:
+                    print(f"Download attempt {attempt + 1} failed for {url}, retrying in {self.retry_delay}s: {e}")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"Failed to download {url} after {self.retry_attempts} attempts: {e}")
+                    return False
+        
+        return False
+
+    def _download_single_file(self, download_task: Dict[str, Any], progress_callback: Optional[Callable] = None) -> Tuple[bool, str, str]:
+        """Download a single file (for use with ThreadPoolExecutor)"""
+        url = download_task['url']
+        local_path = download_task['local_path']
+        file_type = download_task['file_type']
+        
+        success = self.download_file(url, local_path, progress_callback=progress_callback)
+        return success, file_type, os.path.basename(local_path)
     
-    def download_all_assets(self, data: Dict[str, Any]) -> Dict[str, int]:
-        """Download all videos, thumbnails, and tag images"""
+    def download_all_assets(self, data: Dict[str, Any], parallel: bool = True) -> Dict[str, int]:
+        """Download all videos, thumbnails, and tag images with optional parallel processing"""
         downloads_dir = self.config['paths']['local_downloads']
         
         # Create subdirectories
@@ -214,40 +252,125 @@ class ContentManager:
             'videos_low': 0,
             'thumbnails': 0,
             'tag_images': 0,
-            'failed_downloads': 0
+            'failed_downloads': 0,
+            'total_files': 0,
+            'completed_files': 0
         }
         
-        # Download video files
-        print("Downloading videos...")
-        for video in data.get("videos", []):
-            # Download high resolution video
-            if self.download_file(video["fileUrl"], f"{videos_dir}/{video['fileKey']}"):
-                download_stats['videos_high'] += 1
-            else:
-                download_stats['failed_downloads'] += 1
-            
-            # Download low resolution video
-            if self.download_file(video["fileUrlLow"], f"{videos_dir}/{video['fileKeyLow']}"):
-                download_stats['videos_low'] += 1
-            else:
-                download_stats['failed_downloads'] += 1
-            
-            # Download thumbnail
-            if self.download_file(video["thumbnailUrl"], f"{images_dir}/{video['thumbnailKey']}"):
-                download_stats['thumbnails'] += 1
-            else:
-                download_stats['failed_downloads'] += 1
+        # Prepare download tasks
+        download_tasks = []
         
-        # Download tag images
-        print("Downloading tag images...")
+        # Add video file tasks
+        for video in data.get("videos", []):
+            # High resolution video
+            download_tasks.append({
+                'url': video["fileUrl"],
+                'local_path': f"{videos_dir}/{video['fileKey']}",
+                'file_type': 'videos_high'
+            })
+            
+            # Low resolution video
+            download_tasks.append({
+                'url': video["fileUrlLow"],
+                'local_path': f"{videos_dir}/{video['fileKeyLow']}",
+                'file_type': 'videos_low'
+            })
+            
+            # Thumbnail
+            download_tasks.append({
+                'url': video["thumbnailUrl"],
+                'local_path': f"{images_dir}/{video['thumbnailKey']}",
+                'file_type': 'thumbnails'
+            })
+        
+        # Add tag image tasks
         for tag in data.get("tags", []):
             if "imageUrl" in tag and tag["imageUrl"]:
                 filename = tag["imageUrl"].split("/")[-1]
-                if self.download_file(tag["imageUrl"], f"{images_dir}/{filename}"):
-                    download_stats['tag_images'] += 1
-                else:
-                    download_stats['failed_downloads'] += 1
+                download_tasks.append({
+                    'url': tag["imageUrl"],
+                    'local_path': f"{images_dir}/{filename}",
+                    'file_type': 'tag_images'
+                })
         
+        download_stats['total_files'] = len(download_tasks)
+        
+        if parallel and len(download_tasks) > 1:
+            return self._download_assets_parallel(download_tasks, download_stats)
+        else:
+            return self._download_assets_sequential(download_tasks, download_stats)
+    
+    def _download_assets_parallel(self, download_tasks: List[Dict[str, Any]], 
+                                  download_stats: Dict[str, int]) -> Dict[str, int]:
+        """Download assets using parallel processing"""
+        print(f"Starting parallel downloads with {self.max_concurrent_downloads} concurrent connections...")
+        print(f"Total files to download: {len(download_tasks)}")
+        
+        completed_downloads = 0
+        
+        def progress_callback(filename: str, downloaded: int, total: int):
+            """Thread-safe progress callback"""
+            if total > 0:
+                progress = (downloaded / total) * 100
+                print(f"\r[{completed_downloads + 1}/{len(download_tasks)}] {filename}: {progress:.1f}%", end='', flush=True)
+        
+        with ThreadPoolExecutor(max_workers=self.max_concurrent_downloads) as executor:
+            # Submit all download tasks
+            future_to_task = {
+                executor.submit(self._download_single_file, task, progress_callback): task 
+                for task in download_tasks
+            }
+            
+            # Process completed downloads
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    success, file_type, filename = future.result()
+                    
+                    with self._download_stats_lock:
+                        completed_downloads += 1
+                        download_stats['completed_files'] = completed_downloads
+                        
+                        if success:
+                            download_stats[file_type] += 1
+                            print(f"\r✅ [{completed_downloads}/{len(download_tasks)}] {filename}")
+                        else:
+                            download_stats['failed_downloads'] += 1
+                            print(f"\r❌ [{completed_downloads}/{len(download_tasks)}] {filename} - FAILED")
+                            
+                except Exception as e:
+                    with self._download_stats_lock:
+                        completed_downloads += 1
+                        download_stats['failed_downloads'] += 1
+                        download_stats['completed_files'] = completed_downloads
+                        filename = os.path.basename(task['local_path'])
+                        print(f"\r❌ [{completed_downloads}/{len(download_tasks)}] {filename} - ERROR: {e}")
+        
+        print(f"\nParallel download completed!")
+        return download_stats
+    
+    def _download_assets_sequential(self, download_tasks: List[Dict[str, Any]], 
+                                    download_stats: Dict[str, int]) -> Dict[str, int]:
+        """Download assets sequentially (fallback method)"""
+        print("Starting sequential downloads...")
+        print(f"Total files to download: {len(download_tasks)}")
+        
+        for i, task in enumerate(download_tasks, 1):
+            filename = os.path.basename(task['local_path'])
+            print(f"[{i}/{len(download_tasks)}] Downloading {filename}...")
+            
+            success = self.download_file(task['url'], task['local_path'])
+            
+            download_stats['completed_files'] += 1
+            
+            if success:
+                download_stats[task['file_type']] += 1
+                print(f"✅ {filename}")
+            else:
+                download_stats['failed_downloads'] += 1
+                print(f"❌ {filename} - FAILED")
+        
+        print("Sequential download completed!")
         return download_stats
     
     def get_download_summary(self, data: Dict[str, Any]) -> Dict[str, int]:

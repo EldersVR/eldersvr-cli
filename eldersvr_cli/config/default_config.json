@@ -34,5 +34,12 @@
     "transfer",
     "sync",
     "deploy"
-  ]
+  ],
+  "download": {
+    "max_concurrent_downloads": 4,
+    "chunk_size": 8192,
+    "timeout": 60,
+    "retry_attempts": 3,
+    "retry_delay": 1.0
+  }
 }

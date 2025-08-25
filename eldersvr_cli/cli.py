@@ -435,20 +435,41 @@ class EldersVRCLI:
             self.logger.error(f"Failed to read new_data.json: {e}")
             return 1
 
-        self.logger.info("Starting download of all assets...")
+        # Determine download mode and apply overrides
+        parallel_mode = not args.sequential if hasattr(args, 'sequential') else True
+        
+        # Apply configuration overrides from command line arguments
+        if 'download' not in self.config:
+            self.config['download'] = {}
+            
+        if hasattr(args, 'max_workers') and args.max_workers:
+            self.config['download']['max_concurrent_downloads'] = args.max_workers
+            self.logger.info(f"Using {args.max_workers} concurrent downloads")
+            
+        if hasattr(args, 'timeout') and args.timeout:
+            self.config['download']['timeout'] = args.timeout
+            self.logger.info(f"Using {args.timeout}s timeout")
+            
+        if hasattr(args, 'retry_attempts') and args.retry_attempts:
+            self.config['download']['retry_attempts'] = args.retry_attempts
+            self.logger.info(f"Using {args.retry_attempts} retry attempts")
+            
+        mode_str = "parallel" if parallel_mode else "sequential"
+        self.logger.info(f"Starting {mode_str} download of all assets...")
 
         # Initialize content manager for downloads
         if not self.content_manager:
             self.content_manager = ContentManager(self.config)
 
         try:
-            download_stats = self.content_manager.download_all_assets(data)
+            download_stats = self.content_manager.download_all_assets(data, parallel=parallel_mode)
 
             self.logger.info("Download completed!")
             self.logger.info(f"High-res videos: {download_stats['videos_high']}")
             self.logger.info(f"Low-res videos: {download_stats['videos_low']}")
             self.logger.info(f"Thumbnails: {download_stats['thumbnails']}")
             self.logger.info(f"Tag images: {download_stats['tag_images']}")
+            self.logger.info(f"Total completed: {download_stats['completed_files']}/{download_stats['total_files']}")
 
             if download_stats['failed_downloads'] > 0:
                 self.logger.warning(f"Failed downloads: {download_stats['failed_downloads']}")
@@ -847,6 +868,14 @@ class EldersVRCLI:
         download_parser = subparsers.add_parser('download-videos', help='Download all video files')
         download_parser.add_argument('--quality', choices=['high', 'low', 'both'],
                                    default='both', help='Video quality to download')
+        download_parser.add_argument('--sequential', action='store_true', 
+                                   help='Use sequential downloads instead of parallel')
+        download_parser.add_argument('--max-workers', type=int, metavar='N',
+                                   help='Maximum number of concurrent downloads (overrides config)')
+        download_parser.add_argument('--timeout', type=int, metavar='SECONDS',
+                                   help='Download timeout in seconds (overrides config)')
+        download_parser.add_argument('--retry-attempts', type=int, metavar='N',
+                                   help='Number of retry attempts for failed downloads (overrides config)')
 
         # Select devices command
         select_parser = subparsers.add_parser('select-devices', help='Select master and slave devices')
