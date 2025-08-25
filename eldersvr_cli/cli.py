@@ -100,6 +100,10 @@ class EldersVRCLI:
             self.logger.info("Authentication successful!")
             self.logger.info(f"User: {user_info.get('name', 'Unknown')} ({user_info.get('email', 'Unknown')})")
             self.logger.info(f"Company: {company_info.get('name', 'Unknown')}")
+            
+            # Create credential.json for master device transfer
+            self._create_credential_json(email, password)
+            
             return 0
         else:
             self.logger.error("Authentication failed")
@@ -383,6 +387,39 @@ class EldersVRCLI:
             self.logger.error(f"Transfer failed: {e}")
             return 1
 
+    def _create_credential_json(self, email: str, password: str) -> bool:
+        """Create credential.json file with authentication data for master device"""
+        try:
+            # Ensure downloads directory exists
+            downloads_dir = self.config['paths']['local_downloads']
+            os.makedirs(downloads_dir, exist_ok=True)
+            
+            # Get the auth token from content manager
+            token = self.content_manager.auth_token
+            
+            if not token:
+                self.logger.error("No auth token available to create credential.json")
+                return False
+            
+            # Create credential data
+            credential_data = {
+                "token": token,
+                "username": email,
+                "password": password
+            }
+            
+            # Write to credential.json
+            credential_path = os.path.join(downloads_dir, "credential.json")
+            with open(credential_path, 'w') as f:
+                json.dump(credential_data, f, indent=2)
+            
+            self.logger.info(f"Created credential.json at {credential_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create credential.json: {e}")
+            return False
+
     def _transfer_to_master(self, serial: str, progress: TransferProgress, args) -> bool:
         """Transfer data to master device"""
         json_path = f"{self.config['paths']['local_downloads']}/new_data.json"
@@ -404,10 +441,24 @@ class EldersVRCLI:
         if not self.adb_manager.create_eldersvr_structure(serial):
             return False
 
-        # Transfer JSON
+        # Transfer JSON files (new_data.json and credential.json)
         if not args.videos_only:
             progress.update_json_status(serial, 'in_progress')
-            if self.adb_manager.push_json(serial, json_path):
+            
+            # Transfer new_data.json
+            json_transferred = self.adb_manager.push_json(serial, json_path)
+            
+            # Transfer credential.json for master device
+            credential_path = f"{self.config['paths']['local_downloads']}/credential.json"
+            credential_transferred = True
+            if os.path.exists(credential_path):
+                credential_transferred = self.adb_manager.push_credential_json(serial, credential_path)
+                if not credential_transferred:
+                    self.logger.warning("Failed to transfer credential.json to master device")
+            else:
+                self.logger.warning("credential.json not found - please run 'auth' command first")
+            
+            if json_transferred and credential_transferred:
                 file_size = os.path.getsize(json_path) if os.path.exists(json_path) else 0
                 progress.update_json_status(serial, 'completed', file_size)
             else:

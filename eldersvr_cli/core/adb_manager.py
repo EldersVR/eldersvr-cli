@@ -215,6 +215,29 @@ class ADBManager:
             return False
 
     @CLIAccessControl.require_cli_access("transfer")
+    def push_credential_json(self, serial: str, local_credential_path: str) -> bool:
+        """Push credential.json file to device"""
+        if not os.path.exists(local_credential_path):
+            print(f"Warning: credential.json not found at {local_credential_path}")
+            return False
+
+        remote_path = f"{self.eldersvr_path}/credential.json"
+
+        try:
+            result = subprocess.run([
+                "adb", "-s", serial, "push",
+                local_credential_path, remote_path
+            ], capture_output=True, text=True, timeout=60)
+
+            if result.returncode == 0:
+                print(f"Successfully transferred credential.json to {serial}")
+            return result.returncode == 0
+
+        except subprocess.TimeoutExpired:
+            print("Timeout while transferring credential.json")
+            return False
+
+    @CLIAccessControl.require_cli_access("transfer")
     def push_videos(self, serial: str, local_videos_dir: str) -> Tuple[int, int]:
         """Push all video files to device. Returns (success_count, total_count)"""
         if not os.path.exists(local_videos_dir):
