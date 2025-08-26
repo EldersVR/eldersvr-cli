@@ -428,12 +428,27 @@ class ADBManager:
             return False
 
     @CLIAccessControl.require_cli_access("transfer")
-    def push_json(self, serial: str, local_json_path: str) -> bool:
+    def push_json(self, serial: str, local_json_path: str, conflict_handler=None) -> bool:
         """Push JSON file to device"""
         if not os.path.exists(local_json_path):
             raise FileNotFoundError(f"Local JSON file not found: {local_json_path}")
 
         remote_path = f"{self.eldersvr_path}/new_data.json"
+        filename = "new_data.json"
+        
+        # Check if file already exists on device
+        if conflict_handler and self.check_file_exists(serial, remote_path):
+            local_file_size = os.path.getsize(local_json_path)
+            remote_file_size = self.get_file_size(serial, remote_path)
+            action = conflict_handler(filename, local_file_size, remote_file_size, "JSON")
+            
+            if action == 'skip':
+                self.logger.info(f"⏭️  Skipped {filename} (already exists on device)")
+                return True  # Consider this a success since user chose to skip
+            elif action == 'cancel':
+                self.logger.info("❌ Transfer cancelled by user")
+                return False
+            # If action == 'override', continue with transfer
 
         try:
             result = subprocess.run([
@@ -470,25 +485,51 @@ class ADBManager:
             return False
 
     @CLIAccessControl.require_cli_access("transfer")
-    def push_videos(self, serial: str, local_videos_dir: str, progress_callback=None) -> Tuple[int, int]:
+    def push_videos(self, serial: str, local_videos_dir: str, progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
         """Push all video files to device with real-time progress. Returns (success_count, total_count)"""
         if not os.path.exists(local_videos_dir):
             raise FileNotFoundError(f"Local videos directory not found: {local_videos_dir}")
 
         video_files = glob.glob(f"{local_videos_dir}/*.mp4")
-        return self._push_video_files(serial, local_videos_dir, [os.path.basename(f) for f in video_files], progress_callback)
+        return self._push_video_files(serial, local_videos_dir, [os.path.basename(f) for f in video_files], progress_callback, conflict_handler)
+    def check_file_exists(self, serial: str, remote_path: str) -> bool:
+        """Check if a file exists on the device"""
+        try:
+            result = subprocess.run([
+                "adb", "-s", serial, "shell", 
+                f"test -f '{remote_path}' && echo 'exists' || echo 'not_exists'"
+            ], capture_output=True, text=True, check=False)
+            
+            return result.stdout.strip() == 'exists'
+        except Exception as e:
+            self.logger.error(f"Error checking file existence: {e}")
+            return False
+
+    def get_file_size(self, serial: str, remote_path: str) -> int:
+        """Get file size on device, returns 0 if file doesn't exist"""
+        try:
+            result = subprocess.run([
+                "adb", "-s", serial, "shell", 
+                f"stat -c %s '{remote_path}' 2>/dev/null || echo '0'"
+            ], capture_output=True, text=True, check=False)
+            
+            return int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
+        except Exception as e:
+            self.logger.error(f"Error getting file size: {e}")
+            return 0
     
     @CLIAccessControl.require_cli_access("transfer")
-    def push_videos_filtered(self, serial: str, local_videos_dir: str, filtered_files: List[str], progress_callback=None) -> Tuple[int, int]:
+    def push_videos_filtered(self, serial: str, local_videos_dir: str, filtered_files: List[str], progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
         """Push filtered video files to device with real-time progress. Returns (success_count, total_count)"""
         if not os.path.exists(local_videos_dir):
             raise FileNotFoundError(f"Local videos directory not found: {local_videos_dir}")
         
-        return self._push_video_files(serial, local_videos_dir, filtered_files, progress_callback)
+        return self._push_video_files(serial, local_videos_dir, filtered_files, progress_callback, conflict_handler)
     
-    def _push_video_files(self, serial: str, local_videos_dir: str, file_list: List[str], progress_callback=None) -> Tuple[int, int]:
+    def _push_video_files(self, serial: str, local_videos_dir: str, file_list: List[str], progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
         """Internal method to push specific video files with real-time progress tracking"""
         success_count = 0
+        skipped_count = 0
         
         self.logger.info(f"Starting transfer of {len(file_list)} video files to {serial}")
 
@@ -500,8 +541,25 @@ class ADBManager:
                 self.logger.warning(f"❌ Video file not found: {video_file}")
                 continue
                 
-            file_size = os.path.getsize(video_file)
-            self.logger.debug(f"Transferring {filename} ({self._format_file_size(file_size)})")
+            local_file_size = os.path.getsize(video_file)
+            
+            # Check if file already exists on device
+            if conflict_handler and self.check_file_exists(serial, remote_path):
+                remote_file_size = self.get_file_size(serial, remote_path)
+                action = conflict_handler(filename, local_file_size, remote_file_size, "video")
+                
+                if action == 'skip':
+                    self.logger.info(f"⏭️  Skipped {filename} (already exists on device)")
+                    skipped_count += 1
+                    if progress_callback:
+                        progress_callback(success_count + skipped_count, len(file_list), 100)
+                    continue
+                elif action == 'cancel':
+                    self.logger.info("❌ Transfer cancelled by user")
+                    return success_count, len(file_list)
+                # If action == 'override', continue with transfer
+                    
+            self.logger.debug(f"Transferring {filename} ({self._format_file_size(local_file_size)})")
 
             try:
                 # Start ADB push with progress monitoring
@@ -543,7 +601,7 @@ class ADBManager:
         return success_count, len(file_list)
 
     @CLIAccessControl.require_cli_access("transfer")
-    def push_images(self, serial: str, local_images_dir: str, progress_callback=None) -> Tuple[int, int]:
+    def push_images(self, serial: str, local_images_dir: str, progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
         """Push all image files to device with real-time progress. Returns (success_count, total_count)"""
         if not os.path.exists(local_images_dir):
             raise FileNotFoundError(f"Local images directory not found: {local_images_dir}")
@@ -556,15 +614,32 @@ class ADBManager:
             image_files.extend(glob.glob(f"{local_images_dir}/{ext.upper()}"))
 
         success_count = 0
+        skipped_count = 0
         
         self.logger.info(f"Starting transfer of {len(image_files)} image files to {serial}")
 
         for idx, image_file in enumerate(image_files, 1):
             filename = os.path.basename(image_file)
             remote_path = f"{self.image_path}/{filename}"
-            file_size = os.path.getsize(image_file)
+            local_file_size = os.path.getsize(image_file)
             
-            self.logger.debug(f"Transferring {filename} ({self._format_file_size(file_size)})")
+            # Check if file already exists on device
+            if conflict_handler and self.check_file_exists(serial, remote_path):
+                remote_file_size = self.get_file_size(serial, remote_path)
+                action = conflict_handler(filename, local_file_size, remote_file_size, "image")
+                
+                if action == 'skip':
+                    self.logger.info(f"⏭️  Skipped {filename} (already exists on device)")
+                    skipped_count += 1
+                    if progress_callback:
+                        progress_callback(success_count + skipped_count, len(image_files), 100)
+                    continue
+                elif action == 'cancel':
+                    self.logger.info("❌ Transfer cancelled by user")
+                    return success_count, len(image_files)
+                # If action == 'override', continue with transfer
+            
+            self.logger.debug(f"Transferring {filename} ({self._format_file_size(local_file_size)})")
 
             try:
                 # Start ADB push with progress monitoring

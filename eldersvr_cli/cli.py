@@ -728,6 +728,38 @@ class EldersVRCLI:
             self.logger.error(f"Transfer failed: {e}")
             return 1
 
+    def _handle_file_conflict(self, filename: str, local_size: int, remote_size: int, device_type: str) -> str:
+        """
+        Handle file conflict when file already exists on device.
+        Returns: 'skip', 'override', or 'cancel'
+        """
+        print(f"\n⚠️  File conflict detected: {filename}")
+        print(f"   📱 Device ({device_type}): {self._format_file_size(remote_size)}")
+        print(f"   💻 Local: {self._format_file_size(local_size)}")
+        
+        while True:
+            choice = input("\nChoose action:\n  [s]kip this file\n  [o]verride (replace on device)\n  [c]ancel transfer\nChoice (s/o/c): ").lower().strip()
+            
+            if choice in ['s', 'skip']:
+                return 'skip'
+            elif choice in ['o', 'override']:
+                return 'override'
+            elif choice in ['c', 'cancel']:
+                return 'cancel'
+            else:
+                print("Invalid choice. Please enter 's', 'o', or 'c'.")
+
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format"""
+        if size_bytes == 0:
+            return "0 B"
+        
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+
     def _create_credential_json(self, email: str, password: str) -> bool:
         """Create credential.json file with authentication data for master device"""
         try:
@@ -786,8 +818,10 @@ class EldersVRCLI:
         if not args.videos_only:
             progress.update_json_status(serial, 'in_progress')
             
-            # Transfer new_data.json
-            json_transferred = self.adb_manager.push_json(serial, json_path)
+            # Transfer new_data.json with conflict handling
+            device_type = "Master" if "master" in str(serial).lower() else "Slave"
+            conflict_handler = lambda filename, local_size, remote_size, file_type: self._handle_file_conflict(filename, local_size, remote_size, device_type)
+            json_transferred = self.adb_manager.push_json(serial, json_path, conflict_handler)
             
             # Transfer credential.json for master device
             credential_path = f"{self.config['paths']['local_downloads']}/credential.json"
@@ -820,7 +854,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, low_res_files, video_progress_callback)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, low_res_files, video_progress_callback, conflict_handler)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -842,7 +876,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback, conflict_handler)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
@@ -878,7 +912,9 @@ class EldersVRCLI:
         # Transfer JSON
         if not args.videos_only:
             progress.update_json_status(serial, 'in_progress')
-            if self.adb_manager.push_json(serial, json_path):
+            device_type = "Slave"
+            conflict_handler = lambda filename, local_size, remote_size, file_type: self._handle_file_conflict(filename, local_size, remote_size, device_type)
+            if self.adb_manager.push_json(serial, json_path, conflict_handler):
                 file_size = os.path.getsize(json_path) if os.path.exists(json_path) else 0
                 progress.update_json_status(serial, 'completed', file_size)
             else:
@@ -899,7 +935,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, high_res_files, video_progress_callback)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, high_res_files, video_progress_callback, conflict_handler)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -921,7 +957,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback, conflict_handler)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
