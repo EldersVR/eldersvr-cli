@@ -708,9 +708,10 @@ class EldersVRCLI:
         # Initialize progress tracker
         progress = TransferProgress()
 
-        if master_serial:
+        # Only add devices to progress tracker if they will be processed
+        if master_serial and not args.slave_only:
             progress.add_device(master_serial, "Master")
-        if slave_serial:
+        if slave_serial and not args.master_only:
             progress.add_device(slave_serial, "Slave")
 
         success = True
@@ -718,11 +719,17 @@ class EldersVRCLI:
         try:
             # Transfer to master (JSON + videos + images)
             if master_serial and not args.slave_only:
+                self.logger.info("Processing master device transfer...")
                 success &= self._transfer_to_master(master_serial, progress, args)
+            elif master_serial and args.slave_only:
+                self.logger.info("Skipping master device (slave-only mode)")
 
             # Transfer to slave (JSON + videos + images)
             if slave_serial and not args.master_only:
+                self.logger.info("Processing slave device transfer...")
                 success &= self._transfer_to_slave(slave_serial, progress, args)
+            elif slave_serial and args.master_only:
+                self.logger.info("Skipping slave device (master-only mode)")
 
             # Print final summary
             print_deployment_summary(progress)
@@ -738,6 +745,9 @@ class EldersVRCLI:
         Handle file conflict when file already exists on device.
         Returns: 'skip', 'override', or 'cancel'
         """
+        # Debug logging to track when conflicts are triggered
+        self.logger.debug(f"File conflict detected for {device_type} device: {filename}")
+        
         # Check if we already have a global action set
         if self._conflict_action_all == 'skip_all':
             return 'skip'
@@ -829,7 +839,7 @@ class EldersVRCLI:
             progress.update_json_status(serial, 'in_progress')
             
             # Transfer new_data.json with conflict handling
-            device_type = "Master" if "master" in str(serial).lower() else "Slave"
+            device_type = "Master"
             conflict_handler = lambda filename, local_size, remote_size, file_type: self._handle_file_conflict(filename, local_size, remote_size, device_type)
             json_transferred = self.adb_manager.push_json(serial, json_path, conflict_handler)
             
