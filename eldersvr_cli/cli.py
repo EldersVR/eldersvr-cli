@@ -8,6 +8,7 @@ import argparse
 import sys
 import os
 import json
+import glob
 from typing import Dict, Any, Optional, List
 
 from .core import ADBManager, ContentManager
@@ -834,14 +835,70 @@ class EldersVRCLI:
         if not self.adb_manager.create_eldersvr_structure(serial):
             return False
 
+        # Pre-transfer conflict check - get complete file list
+        local_files_to_transfer = {}
+        
+        # Add JSON files if needed
+        if not args.videos_only:
+            if os.path.exists(json_path):
+                local_files_to_transfer['new_data.json'] = json_path
+            credential_path = f"{self.config['paths']['local_downloads']}/credential.json"
+            if os.path.exists(credential_path):
+                local_files_to_transfer['credential.json'] = credential_path
+        
+        # Add video files if needed
+        if not args.json_only and os.path.exists(videos_dir):
+            low_res_files = [f for f in os.listdir(videos_dir) if f.startswith('lowres_') and f.endswith('.mp4')]
+            for filename in low_res_files:
+                local_files_to_transfer[filename] = os.path.join(videos_dir, filename)
+        
+        # Add image files if needed  
+        if not args.json_only and os.path.exists(images_dir):
+            image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+            for ext in image_extensions:
+                for filename in glob.glob(f"{images_dir}/*.{ext}") + glob.glob(f"{images_dir}/*.{ext.upper()}"):
+                    basename = os.path.basename(filename)
+                    local_files_to_transfer[basename] = filename
+        
+        # Check for conflicts with actual device contents
+        if local_files_to_transfer:
+            conflict_check = self.adb_manager.check_transfer_conflicts(serial, local_files_to_transfer, "Master")
+            
+            if conflict_check['conflicts']:
+                print(f"\n📋 Pre-transfer check for Master device:")
+                print(f"   • {len(conflict_check['safe_files'])} new files to transfer")
+                print(f"   • {len(conflict_check['conflicts'])} files already exist on device")
+                
+                print(f"\n⚠️  Files that already exist on Master device:")
+                for conflict in conflict_check['conflicts'][:10]:  # Show first 10
+                    print(f"   📱 {conflict['filename']} - Device: {conflict['remote_size_formatted']} | Local: {conflict['local_size_formatted']}")
+                
+                if len(conflict_check['conflicts']) > 10:
+                    print(f"   ... and {len(conflict_check['conflicts']) - 10} more files")
+                
+                while True:
+                    choice = input(f"\nChoose action for ALL {len(conflict_check['conflicts'])} conflicting files:\n  [sa] skip all conflicting files\n  [oa] override all conflicting files\n  [c] cancel transfer\nChoice (sa/oa/c): ").lower().strip()
+                    
+                    if choice in ['sa', 'skip_all']:
+                        self._conflict_action_all = 'skip_all'
+                        print(f"Will skip {len(conflict_check['conflicts'])} existing files and transfer {len(conflict_check['safe_files'])} new files")
+                        break
+                    elif choice in ['oa', 'override_all']:
+                        self._conflict_action_all = 'override_all'
+                        print(f"Will override {len(conflict_check['conflicts'])} existing files and transfer {len(conflict_check['safe_files'])} new files")
+                        break
+                    elif choice in ['c', 'cancel']:
+                        self.logger.info("Transfer cancelled by user")
+                        return False
+                    else:
+                        print("Please enter 'sa' for skip all, 'oa' for override all, or 'c' for cancel")
+
         # Transfer JSON files (new_data.json and credential.json)
         if not args.videos_only:
             progress.update_json_status(serial, 'in_progress')
             
-            # Transfer new_data.json with conflict handling
-            device_type = "Master"
-            conflict_handler = lambda filename, local_size, remote_size, file_type: self._handle_file_conflict(filename, local_size, remote_size, device_type)
-            json_transferred = self.adb_manager.push_json(serial, json_path, conflict_handler)
+            # Transfer new_data.json (conflicts already resolved in pre-check)
+            json_transferred = self.adb_manager.push_json(serial, json_path)
             
             # Transfer credential.json for master device
             credential_path = f"{self.config['paths']['local_downloads']}/credential.json"
@@ -874,7 +931,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, low_res_files, video_progress_callback, conflict_handler)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, low_res_files, video_progress_callback)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -896,7 +953,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback, conflict_handler)
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
@@ -922,12 +979,65 @@ class EldersVRCLI:
         if not self.adb_manager.create_eldersvr_structure(serial):
             return False
 
+        # Pre-transfer conflict check - get complete file list
+        local_files_to_transfer = {}
+        
+        # Add JSON files if needed
+        if not args.videos_only:
+            if os.path.exists(json_path):
+                local_files_to_transfer['new_data.json'] = json_path
+        
+        # Add video files if needed
+        if not args.json_only and os.path.exists(videos_dir):
+            high_res_files = [f for f in os.listdir(videos_dir) if f.startswith('highres_') and f.endswith('.mp4')]
+            for filename in high_res_files:
+                local_files_to_transfer[filename] = os.path.join(videos_dir, filename)
+        
+        # Add image files if needed  
+        if not args.json_only and os.path.exists(images_dir):
+            image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+            for ext in image_extensions:
+                for filename in glob.glob(f"{images_dir}/*.{ext}") + glob.glob(f"{images_dir}/*.{ext.upper()}"):
+                    basename = os.path.basename(filename)
+                    local_files_to_transfer[basename] = filename
+        
+        # Check for conflicts with actual device contents
+        if local_files_to_transfer:
+            conflict_check = self.adb_manager.check_transfer_conflicts(serial, local_files_to_transfer, "Slave")
+            
+            if conflict_check['conflicts']:
+                print(f"\n📋 Pre-transfer check for Slave device:")
+                print(f"   • {len(conflict_check['safe_files'])} new files to transfer")
+                print(f"   • {len(conflict_check['conflicts'])} files already exist on device")
+                
+                print(f"\n⚠️  Files that already exist on Slave device:")
+                for conflict in conflict_check['conflicts'][:10]:  # Show first 10
+                    print(f"   🥽 {conflict['filename']} - Device: {conflict['remote_size_formatted']} | Local: {conflict['local_size_formatted']}")
+                
+                if len(conflict_check['conflicts']) > 10:
+                    print(f"   ... and {len(conflict_check['conflicts']) - 10} more files")
+                
+                while True:
+                    choice = input(f"\nChoose action for ALL {len(conflict_check['conflicts'])} conflicting files:\n  [sa] skip all conflicting files\n  [oa] override all conflicting files\n  [c] cancel transfer\nChoice (sa/oa/c): ").lower().strip()
+                    
+                    if choice in ['sa', 'skip_all']:
+                        self._conflict_action_all = 'skip_all'
+                        print(f"Will skip {len(conflict_check['conflicts'])} existing files and transfer {len(conflict_check['safe_files'])} new files")
+                        break
+                    elif choice in ['oa', 'override_all']:
+                        self._conflict_action_all = 'override_all'
+                        print(f"Will override {len(conflict_check['conflicts'])} existing files and transfer {len(conflict_check['safe_files'])} new files")
+                        break
+                    elif choice in ['c', 'cancel']:
+                        self.logger.info("Transfer cancelled by user")
+                        return False
+                    else:
+                        print("Please enter 'sa' for skip all, 'oa' for override all, or 'c' for cancel")
+
         # Transfer JSON
         if not args.videos_only:
             progress.update_json_status(serial, 'in_progress')
-            device_type = "Slave"
-            conflict_handler = lambda filename, local_size, remote_size, file_type: self._handle_file_conflict(filename, local_size, remote_size, device_type)
-            if self.adb_manager.push_json(serial, json_path, conflict_handler):
+            if self.adb_manager.push_json(serial, json_path):
                 file_size = os.path.getsize(json_path) if os.path.exists(json_path) else 0
                 progress.update_json_status(serial, 'completed', file_size)
             else:
@@ -948,7 +1058,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, high_res_files, video_progress_callback, conflict_handler)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, high_res_files, video_progress_callback)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -970,7 +1080,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback, conflict_handler)
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')

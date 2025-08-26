@@ -553,6 +553,138 @@ class ADBManager:
                 self.logger.error(f"Error creating parent directory {parent_dir}: {e}")
                 return False
         return True
+
+    def get_device_file_inventory(self, serial: str) -> Dict[str, Any]:
+        """Get complete inventory of files on device for conflict detection"""
+        inventory = {
+            'json_files': {},
+            'video_files': {},
+            'image_files': {},
+            'total_files': 0,
+            'last_checked': time.time()
+        }
+        
+        try:
+            # Check JSON file
+            json_path = f"{self.eldersvr_path}/new_data.json"
+            if self.check_file_exists(serial, json_path):
+                size = self.get_file_size(serial, json_path)
+                inventory['json_files']['new_data.json'] = {
+                    'path': json_path,
+                    'size': size,
+                    'size_formatted': self._format_file_size(size)
+                }
+                inventory['total_files'] += 1
+            
+            # Check credential.json
+            credential_path = f"{self.eldersvr_path}/credential.json"
+            if self.check_file_exists(serial, credential_path):
+                size = self.get_file_size(serial, credential_path)
+                inventory['json_files']['credential.json'] = {
+                    'path': credential_path,
+                    'size': size,
+                    'size_formatted': self._format_file_size(size)
+                }
+                inventory['total_files'] += 1
+            
+            # List video files
+            if self.check_directory_exists(serial, self.video_path):
+                result = subprocess.run([
+                    "adb", "-s", serial, "shell",
+                    f"find '{self.video_path}' -name '*.mp4' -type f 2>/dev/null || true"
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.stdout.strip():
+                    for video_path in result.stdout.strip().split('\n'):
+                        if video_path.strip():
+                            filename = video_path.split('/')[-1]
+                            size = self.get_file_size(serial, video_path)
+                            inventory['video_files'][filename] = {
+                                'path': video_path,
+                                'size': size,
+                                'size_formatted': self._format_file_size(size)
+                            }
+                            inventory['total_files'] += 1
+            
+            # List image files
+            if self.check_directory_exists(serial, self.image_path):
+                result = subprocess.run([
+                    "adb", "-s", serial, "shell",
+                    f"find '{self.image_path}' -type f \\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.gif' -o -name '*.webp' \\) 2>/dev/null || true"
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.stdout.strip():
+                    for image_path in result.stdout.strip().split('\n'):
+                        if image_path.strip():
+                            filename = image_path.split('/')[-1]
+                            size = self.get_file_size(serial, image_path)
+                            inventory['image_files'][filename] = {
+                                'path': image_path,
+                                'size': size,
+                                'size_formatted': self._format_file_size(size)
+                            }
+                            inventory['total_files'] += 1
+            
+            self.logger.debug(f"Device inventory for {serial}: {inventory['total_files']} total files")
+            return inventory
+            
+        except Exception as e:
+            self.logger.error(f"Error getting device inventory for {serial}: {e}")
+            return inventory
+
+    def check_transfer_conflicts(self, serial: str, local_files_to_transfer: Dict[str, str], device_type: str = "Device") -> Dict[str, Any]:
+        """
+        Check which local files would conflict with existing files on device
+        local_files_to_transfer: {'filename': 'local_path', ...}
+        Returns: {'conflicts': [...], 'safe_files': [...], 'summary': '...'}
+        """
+        conflicts = []
+        safe_files = []
+        
+        # Get current device inventory
+        inventory = self.get_device_file_inventory(serial)
+        
+        # Check each file that would be transferred
+        for filename, local_path in local_files_to_transfer.items():
+            local_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+            
+            # Check if file exists in any category on device
+            remote_file_info = None
+            if filename in inventory['json_files']:
+                remote_file_info = inventory['json_files'][filename]
+            elif filename in inventory['video_files']:
+                remote_file_info = inventory['video_files'][filename] 
+            elif filename in inventory['image_files']:
+                remote_file_info = inventory['image_files'][filename]
+            
+            if remote_file_info:
+                conflicts.append({
+                    'filename': filename,
+                    'local_path': local_path,
+                    'local_size': local_size,
+                    'local_size_formatted': self._format_file_size(local_size),
+                    'remote_size': remote_file_info['size'],
+                    'remote_size_formatted': remote_file_info['size_formatted'],
+                    'remote_path': remote_file_info['path'],
+                    'device_type': device_type
+                })
+            else:
+                safe_files.append({
+                    'filename': filename,
+                    'local_path': local_path,
+                    'local_size': local_size,
+                    'local_size_formatted': self._format_file_size(local_size)
+                })
+        
+        summary = f"Found {len(conflicts)} conflicts and {len(safe_files)} safe transfers for {device_type}"
+        self.logger.info(summary)
+        
+        return {
+            'conflicts': conflicts,
+            'safe_files': safe_files,
+            'summary': summary,
+            'device_inventory': inventory
+        }
     
     @CLIAccessControl.require_cli_access("transfer")
     def push_videos_filtered(self, serial: str, local_videos_dir: str, filtered_files: List[str], progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
