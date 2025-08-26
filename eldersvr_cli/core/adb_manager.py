@@ -687,14 +687,14 @@ class ADBManager:
         }
     
     @CLIAccessControl.require_cli_access("transfer")
-    def push_videos_filtered(self, serial: str, local_videos_dir: str, filtered_files: List[str], progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
+    def push_videos_filtered(self, serial: str, local_videos_dir: str, filtered_files: List[str], progress_callback=None, conflict_handler=None, files_to_skip=None) -> Tuple[int, int]:
         """Push filtered video files to device with real-time progress. Returns (success_count, total_count)"""
         if not os.path.exists(local_videos_dir):
             raise FileNotFoundError(f"Local videos directory not found: {local_videos_dir}")
         
-        return self._push_video_files(serial, local_videos_dir, filtered_files, progress_callback, conflict_handler)
+        return self._push_video_files(serial, local_videos_dir, filtered_files, progress_callback, conflict_handler, files_to_skip)
     
-    def _push_video_files(self, serial: str, local_videos_dir: str, file_list: List[str], progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
+    def _push_video_files(self, serial: str, local_videos_dir: str, file_list: List[str], progress_callback=None, conflict_handler=None, files_to_skip=None) -> Tuple[int, int]:
         """Internal method to push specific video files with real-time progress tracking"""
         success_count = 0
         skipped_count = 0
@@ -710,6 +710,14 @@ class ADBManager:
                 continue
                 
             local_file_size = os.path.getsize(video_file)
+            
+            # Skip files that are in the skip list
+            if files_to_skip and filename in files_to_skip:
+                self.logger.info(f"⏭️  Skipped {filename} (skip all - already exists on device)")
+                skipped_count += 1
+                if progress_callback:
+                    progress_callback(success_count + skipped_count, len(file_list), 100)
+                continue
             
             # Check if file already exists on device BEFORE creating directories
             file_exists = False
@@ -779,7 +787,7 @@ class ADBManager:
         return success_count, len(file_list)
 
     @CLIAccessControl.require_cli_access("transfer")
-    def push_images(self, serial: str, local_images_dir: str, progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
+    def push_images(self, serial: str, local_images_dir: str, progress_callback=None, conflict_handler=None, files_to_skip=None) -> Tuple[int, int]:
         """Push all image files to device with real-time progress. Returns (success_count, total_count)"""
         if not os.path.exists(local_images_dir):
             raise FileNotFoundError(f"Local images directory not found: {local_images_dir}")
@@ -800,6 +808,14 @@ class ADBManager:
             filename = os.path.basename(image_file)
             remote_path = f"{self.image_path}/{filename}"
             local_file_size = os.path.getsize(image_file)
+            
+            # Skip files that are in the skip list
+            if files_to_skip and filename in files_to_skip:
+                self.logger.info(f"⏭️  Skipped {filename} (skip all - already exists on device)")
+                skipped_count += 1
+                if progress_callback:
+                    progress_callback(success_count + skipped_count, len(image_files), 100)
+                continue
             
             # Check if file already exists on device BEFORE creating directories
             file_exists = False

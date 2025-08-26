@@ -861,6 +861,7 @@ class EldersVRCLI:
                     local_files_to_transfer[basename] = filename
         
         # Check for conflicts with actual device contents
+        files_to_skip = set()
         if local_files_to_transfer:
             conflict_check = self.adb_manager.check_transfer_conflicts(serial, local_files_to_transfer, "Master")
             
@@ -881,6 +882,8 @@ class EldersVRCLI:
                     
                     if choice in ['sa', 'skip_all']:
                         self._conflict_action_all = 'skip_all'
+                        # Add conflicting files to skip list
+                        files_to_skip = {conflict['filename'] for conflict in conflict_check['conflicts']}
                         print(f"Will skip {len(conflict_check['conflicts'])} existing files and transfer {len(conflict_check['safe_files'])} new files")
                         break
                     elif choice in ['oa', 'override_all']:
@@ -897,16 +900,23 @@ class EldersVRCLI:
         if not args.videos_only:
             progress.update_json_status(serial, 'in_progress')
             
-            # Transfer new_data.json (conflicts already resolved in pre-check)
-            json_transferred = self.adb_manager.push_json(serial, json_path)
+            # Transfer new_data.json (skip if user chose skip all)
+            json_transferred = True
+            if 'new_data.json' in files_to_skip:
+                self.logger.info("⏭️  Skipped new_data.json (skip all - already exists on device)")
+            else:
+                json_transferred = self.adb_manager.push_json(serial, json_path)
             
             # Transfer credential.json for master device
             credential_path = f"{self.config['paths']['local_downloads']}/credential.json"
             credential_transferred = True
             if os.path.exists(credential_path):
-                credential_transferred = self.adb_manager.push_credential_json(serial, credential_path)
-                if not credential_transferred:
-                    self.logger.warning("Failed to transfer credential.json to master device")
+                if 'credential.json' in files_to_skip:
+                    self.logger.info("⏭️  Skipped credential.json (skip all - already exists on device)")
+                else:
+                    credential_transferred = self.adb_manager.push_credential_json(serial, credential_path)
+                    if not credential_transferred:
+                        self.logger.warning("Failed to transfer credential.json to master device")
             else:
                 self.logger.warning("credential.json not found - please run 'auth' command first")
             
@@ -920,7 +930,14 @@ class EldersVRCLI:
         # Transfer videos (low-res only for master device)
         if not args.json_only and os.path.exists(videos_dir):
             # Filter for low-res videos only (files with 'lowres_' prefix)
-            low_res_files = [f for f in os.listdir(videos_dir) if f.startswith('lowres_') and f.endswith('.mp4')]
+            all_low_res_files = [f for f in os.listdir(videos_dir) if f.startswith('lowres_') and f.endswith('.mp4')]
+            # Remove files that should be skipped
+            low_res_files = [f for f in all_low_res_files if f not in files_to_skip]
+            
+            skipped_count = len(all_low_res_files) - len(low_res_files)
+            if skipped_count > 0:
+                self.logger.info(f"⏭️  Skipping {skipped_count} video files that already exist on device")
+            
             progress.update_videos_progress(serial, 0, len(low_res_files), 'in_progress')
 
             self.logger.info(f"Transferring {len(low_res_files)} low-res videos to master device {serial}")
@@ -931,7 +948,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, low_res_files, video_progress_callback)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, low_res_files, video_progress_callback, None, files_to_skip)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -953,7 +970,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback, None, files_to_skip)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
@@ -1058,7 +1075,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, high_res_files, video_progress_callback)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, high_res_files, video_progress_callback, None, files_to_skip)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
@@ -1080,7 +1097,7 @@ class EldersVRCLI:
                 if current_file_progress > 0:
                     print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
+            image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback, None, files_to_skip)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
