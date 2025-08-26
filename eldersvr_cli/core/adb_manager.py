@@ -492,9 +492,28 @@ class ADBManager:
 
         video_files = glob.glob(f"{local_videos_dir}/*.mp4")
         return self._push_video_files(serial, local_videos_dir, [os.path.basename(f) for f in video_files], progress_callback, conflict_handler)
-    def check_file_exists(self, serial: str, remote_path: str) -> bool:
-        """Check if a file exists on the device"""
+    def check_directory_exists(self, serial: str, remote_path: str) -> bool:
+        """Check if a directory exists on the device"""
         try:
+            result = subprocess.run([
+                "adb", "-s", serial, "shell", 
+                f"test -d '{remote_path}' && echo 'exists' || echo 'not_exists'"
+            ], capture_output=True, text=True, check=False)
+            
+            return result.stdout.strip() == 'exists'
+        except Exception as e:
+            self.logger.error(f"Error checking directory existence: {e}")
+            return False
+
+    def check_file_exists(self, serial: str, remote_path: str) -> bool:
+        """Check if a file exists on the device (also checks if parent directory exists)"""
+        try:
+            # First check if the parent directory exists
+            parent_dir = '/'.join(remote_path.split('/')[:-1])
+            if parent_dir and not self.check_directory_exists(serial, parent_dir):
+                return False
+                
+            # Then check if the file exists
             result = subprocess.run([
                 "adb", "-s", serial, "shell", 
                 f"test -f '{remote_path}' && echo 'exists' || echo 'not_exists'"
@@ -517,6 +536,23 @@ class ADBManager:
         except Exception as e:
             self.logger.error(f"Error getting file size: {e}")
             return 0
+
+    def ensure_parent_directory(self, serial: str, remote_path: str) -> bool:
+        """Ensure parent directory exists for the given file path"""
+        parent_dir = '/'.join(remote_path.split('/')[:-1])
+        if parent_dir and not self.check_directory_exists(serial, parent_dir):
+            self.logger.debug(f"Creating parent directory: {parent_dir}")
+            try:
+                result = subprocess.run([
+                    "adb", "-s", serial, "shell",
+                    "mkdir", "-p", parent_dir
+                ], capture_output=True, text=True, timeout=15)
+                
+                return result.returncode == 0
+            except Exception as e:
+                self.logger.error(f"Error creating parent directory {parent_dir}: {e}")
+                return False
+        return True
     
     @CLIAccessControl.require_cli_access("transfer")
     def push_videos_filtered(self, serial: str, local_videos_dir: str, filtered_files: List[str], progress_callback=None, conflict_handler=None) -> Tuple[int, int]:
@@ -543,8 +579,18 @@ class ADBManager:
                 
             local_file_size = os.path.getsize(video_file)
             
-            # Check if file already exists on device
-            if conflict_handler and self.check_file_exists(serial, remote_path):
+            # Check if file already exists on device BEFORE creating directories
+            file_exists = False
+            if conflict_handler:
+                file_exists = self.check_file_exists(serial, remote_path)
+                
+            # Ensure parent directory exists (after checking file existence)
+            if not self.ensure_parent_directory(serial, remote_path):
+                self.logger.error(f"❌ Failed to create parent directory for {filename}")
+                continue
+            
+            # Handle file conflict if file existed
+            if file_exists:
                 remote_file_size = self.get_file_size(serial, remote_path)
                 action = conflict_handler(filename, local_file_size, remote_file_size, "video")
                 
@@ -623,8 +669,18 @@ class ADBManager:
             remote_path = f"{self.image_path}/{filename}"
             local_file_size = os.path.getsize(image_file)
             
-            # Check if file already exists on device
-            if conflict_handler and self.check_file_exists(serial, remote_path):
+            # Check if file already exists on device BEFORE creating directories
+            file_exists = False
+            if conflict_handler:
+                file_exists = self.check_file_exists(serial, remote_path)
+                
+            # Ensure parent directory exists (after checking file existence)
+            if not self.ensure_parent_directory(serial, remote_path):
+                self.logger.error(f"❌ Failed to create parent directory for {filename}")
+                continue
+            
+            # Handle file conflict if file existed
+            if file_exists:
                 remote_file_size = self.get_file_size(serial, remote_path)
                 action = conflict_handler(filename, local_file_size, remote_file_size, "image")
                 

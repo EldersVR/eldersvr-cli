@@ -9,7 +9,7 @@ A command-line tool for deploying EldersVR content to Android devices via ADB.
 - **Quality-Specific Deployment**: Master gets low-res, slave gets high-res videos
 - **Directory Mapping**: List and compare device directories for verification
 - **Smart Downloads**: File existence checking with user confirmation
-- **File Conflict Resolution**: Interactive prompts for existing files during transfers
+- **File Conflict Resolution**: Interactive prompts with skip/override all options for transfers
 - **Real-time Progress**: Live progress percentages for transfers and downloads
 - **Security**: CLI-only operations for deployment and synchronization
 
@@ -167,7 +167,7 @@ eldersvr-onboard list-directories --device ABC123 --detailed
 # Slave gets: JSON + high-res videos + images
 eldersvr-onboard transfer
 
-# File Conflict Handling (New Feature!)
+# File Conflict Handling (Enhanced!)
 # When files already exist on device, CLI will prompt:
 #   ⚠️  File conflict detected: video_file.mp4
 #   📱 Device (Master): 15.2 MB
@@ -175,9 +175,11 @@ eldersvr-onboard transfer
 #   
 #   Choose action:
 #     [s]kip this file
-#     [o]verride (replace on device)
+#     [sa] skip all remaining files
+#     [o]verride (replace on device)  
+#     [oa] override all remaining files
 #     [c]ancel transfer
-#   Choice (s/o/c): 
+#   Choice (s/sa/o/oa/c): 
 
 # Transfer to specific device types only
 eldersvr-onboard transfer --master-only  # Low-res videos + JSON + credential
@@ -682,3 +684,4 @@ For issues and support, please visit: https://github.com/EldersVR/eldersvr-cli/i
 - **v1.4.0**: Directory listing and comparison tools
 - **v1.5.0**: Updated to use app-specific Android directories
 - **v1.6.0**: Enhanced file conflict resolution for transfers (interactive skip/override prompts)
+- **v1.7.0**: Fixed directory handling, removed cleanup, added skip all/override all options

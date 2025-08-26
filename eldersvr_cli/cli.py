@@ -22,6 +22,8 @@ class EldersVRCLI:
         self.adb_manager: Optional[ADBManager] = None
         self.content_manager: Optional[ContentManager] = None
         self.logger = setup_logger('eldersvr-cli')
+        # File conflict handling state
+        self._conflict_action_all = None  # 'skip_all', 'override_all', or None
 
     def load_config(self, config_path: str = None) -> Dict[str, Any]:
         """Load configuration from file with enhanced validation and logging"""
@@ -692,6 +694,9 @@ class EldersVRCLI:
     def cmd_transfer(self, args) -> int:
         """Handle transfer command (CLI-only)"""
         self._ensure_managers_initialized()
+        
+        # Reset conflict action state for this transfer
+        self._conflict_action_all = None
 
         master_serial = self.config['devices']['master_serial']
         slave_serial = self.config['devices']['slave_serial']
@@ -733,21 +738,33 @@ class EldersVRCLI:
         Handle file conflict when file already exists on device.
         Returns: 'skip', 'override', or 'cancel'
         """
+        # Check if we already have a global action set
+        if self._conflict_action_all == 'skip_all':
+            return 'skip'
+        elif self._conflict_action_all == 'override_all':
+            return 'override'
+        
         print(f"\n⚠️  File conflict detected: {filename}")
         print(f"   📱 Device ({device_type}): {self._format_file_size(remote_size)}")
         print(f"   💻 Local: {self._format_file_size(local_size)}")
         
         while True:
-            choice = input("\nChoose action:\n  [s]kip this file\n  [o]verride (replace on device)\n  [c]ancel transfer\nChoice (s/o/c): ").lower().strip()
+            choice = input("\nChoose action:\n  [s]kip this file\n  [sa] skip all remaining files\n  [o]verride (replace on device)\n  [oa] override all remaining files\n  [c]ancel transfer\nChoice (s/sa/o/oa/c): ").lower().strip()
             
             if choice in ['s', 'skip']:
                 return 'skip'
+            elif choice in ['sa', 'skip_all']:
+                self._conflict_action_all = 'skip_all'
+                return 'skip'
             elif choice in ['o', 'override']:
+                return 'override'
+            elif choice in ['oa', 'override_all']:
+                self._conflict_action_all = 'override_all'
                 return 'override'
             elif choice in ['c', 'cancel']:
                 return 'cancel'
             else:
-                print("Invalid choice. Please enter 's', 'o', or 'c'.")
+                print("Invalid choice. Please enter 's', 'sa', 'o', 'oa', or 'c'.")
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Format file size in human-readable format"""
@@ -802,13 +819,6 @@ class EldersVRCLI:
         success = True
 
         self.logger.info(f"Transferring to master device {serial} (low-res videos only)...")
-
-        # Clear cache and logs first
-        self.logger.info(f"Clearing existing files on master device {serial}...")
-        if self.adb_manager.clear_cache_and_logs(serial):
-            self.logger.info("Successfully cleared existing files")
-        else:
-            self.logger.warning("Some files could not be cleared, continuing anyway...")
 
         # Create directory structure
         if not self.adb_manager.create_eldersvr_structure(serial):
@@ -897,13 +907,6 @@ class EldersVRCLI:
         success = True
 
         self.logger.info(f"Transferring to slave device {serial} (high-res videos only)...")
-
-        # Clear cache and logs first
-        self.logger.info(f"Clearing existing files on slave device {serial}...")
-        if self.adb_manager.clear_cache_and_logs(serial):
-            self.logger.info("Successfully cleared existing files")
-        else:
-            self.logger.warning("Some files could not be cleared, continuing anyway...")
 
         # Create directory structure
         if not self.adb_manager.create_eldersvr_structure(serial):
