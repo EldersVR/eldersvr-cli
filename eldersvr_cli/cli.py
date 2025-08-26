@@ -196,7 +196,7 @@ class EldersVRCLI:
             },
             "paths": {
                 "local_downloads": "./downloads",
-                "device_path": "/storage/emulated/0/Download/EldersVR",
+                "device_path": "/storage/emulated/0/Android/data/com.q42.eldersvr/files/EldersVR",
                 "json_filename": "new_data.json"
             },
             "devices": {
@@ -212,7 +212,7 @@ class EldersVRCLI:
     def _initialize_managers(self):
         """Initialize managers with configuration"""
         if self.config:
-            device_path = self.config.get("paths", {}).get("device_path", "/storage/emulated/0/Download/EldersVR")
+            device_path = self.config.get("paths", {}).get("device_path", "/storage/emulated/0/Android/data/com.q42.eldersvr/files/EldersVR")
             self.adb_manager = ADBManager(device_path)
 
     def _ensure_managers_initialized(self):
@@ -367,6 +367,178 @@ class EldersVRCLI:
                 all_verified = False
 
         return 0 if all_verified else 1
+
+    def cmd_list_directories(self, args) -> int:
+        """Handle list directories command"""
+        self._ensure_managers_initialized()
+        
+        try:
+            if args.compare:
+                # Compare master and slave directories
+                master_serial = self.config['devices']['master_serial']
+                slave_serial = self.config['devices']['slave_serial']
+                
+                if not master_serial or not slave_serial:
+                    self.logger.error("Both master and slave devices must be configured for comparison")
+                    self.logger.info("Use 'select-devices' command to configure devices first")
+                    return 1
+                
+                self.logger.info(f"Comparing directories between master ({master_serial}) and slave ({slave_serial})")
+                comparison = self.adb_manager.compare_devices_directories(master_serial, slave_serial)
+                
+                self._print_directory_comparison(comparison)
+                
+            elif args.device:
+                # List specific device directory
+                self.logger.info(f"Listing directories on device {args.device}")
+                directory_info = self.adb_manager.list_directory_contents(args.device, detailed=args.detailed)
+                
+                self._print_device_directory_info(directory_info)
+                
+            else:
+                # List both master and slave if configured
+                devices_to_check = []
+                
+                master_serial = self.config['devices']['master_serial']
+                slave_serial = self.config['devices']['slave_serial']
+                
+                if master_serial:
+                    devices_to_check.append(('MASTER', master_serial))
+                if slave_serial:
+                    devices_to_check.append(('SLAVE', slave_serial))
+                
+                if not devices_to_check:
+                    self.logger.error("No devices configured. Use 'select-devices' command first.")
+                    return 1
+                
+                for device_type, serial in devices_to_check:
+                    print(f"\n{'='*60}")
+                    print(f"{device_type} DEVICE: {serial}")
+                    print(f"{'='*60}")
+                    
+                    directory_info = self.adb_manager.list_directory_contents(serial, detailed=args.detailed)
+                    self._print_device_directory_info(directory_info)
+            
+            return 0
+            
+        except Exception as e:
+            self.logger.error(f"Failed to list directories: {e}")
+            return 1
+    
+    def _print_device_directory_info(self, directory_info: Dict[str, Any]):
+        """Print formatted directory information for a single device"""
+        print(f"Device: {directory_info['device_serial']}")
+        print(f"Base Path: {directory_info['base_path']}")
+        
+        if directory_info['errors']:
+            print("\n⚠️  ERRORS:")
+            for error in directory_info['errors']:
+                print(f"   {error}")
+        
+        # Print storage info if available
+        if 'storage_info' in directory_info:
+            storage = directory_info['storage_info']
+            print(f"\n💾 STORAGE INFO:")
+            if 'total_space' in storage:
+                print(f"   Total Space: {storage.get('total_space', 'Unknown')}")
+            if 'available_space' in storage:
+                print(f"   Available: {storage.get('available_space', 'Unknown')}")
+            if 'used_space' in storage:
+                print(f"   EldersVR Used: {storage.get('used_space', 'Unknown')}")
+        
+        print(f"\n📁 DIRECTORIES:")
+        print(f"   Total EldersVR Size: {directory_info['total_size_formatted']}")
+        
+        for dir_name, dir_info in directory_info['directories'].items():
+            status = "✅" if dir_info['exists'] else "❌"
+            print(f"\n   {status} {dir_name.upper()} ({dir_info['path']})")
+            
+            if dir_info['exists']:
+                print(f"      Files: {dir_info['file_count']}")
+                print(f"      Size: {dir_info.get('total_size_formatted', '0B')}")
+                
+                if dir_info['files']:
+                    print(f"      Contents:")
+                    # Show first 10 files
+                    for i, file_info in enumerate(dir_info['files'][:10]):
+                        size_info = f" ({file_info.get('size_formatted', 'Unknown')})" if file_info.get('size_formatted') else ""
+                        print(f"        {i+1:2d}. {file_info['name']}{size_info}")
+                    
+                    if len(dir_info['files']) > 10:
+                        print(f"        ... and {len(dir_info['files']) - 10} more files")
+                else:
+                    print(f"      (empty directory)")
+        
+        print()
+    
+    def _print_directory_comparison(self, comparison: Dict[str, Any]):
+        """Print formatted directory comparison between master and slave"""
+        print("\n📊 DIRECTORY COMPARISON")
+        print("=" * 60)
+        
+        master = comparison['master']
+        slave = comparison['slave']
+        comp = comparison['comparison']
+        
+        print(f"Master Device: {master['device_serial']}")
+        print(f"Slave Device:  {slave['device_serial']}")
+        
+        # Print errors if any
+        all_errors = master['errors'] + slave['errors']
+        if all_errors:
+            print("\n⚠️  ERRORS:")
+            for error in all_errors:
+                print(f"   {error}")
+        
+        # Compare each directory type
+        for dir_type in ['root', 'videos', 'images']:
+            dir_comp = comp[dir_type]
+            
+            print(f"\n📁 {dir_type.upper()} DIRECTORY COMPARISON:")
+            print(f"   Master files: {dir_comp['master_count']} ({self._format_file_size(dir_comp['master_total_size'])})")
+            print(f"   Slave files:  {dir_comp['slave_count']} ({self._format_file_size(dir_comp['slave_total_size'])})")
+            
+            # Files only on master
+            if dir_comp['master_only']:
+                print(f"\n   📱 MASTER ONLY ({len(dir_comp['master_only'])} files):")
+                for file_info in dir_comp['master_only'][:5]:
+                    size_info = f" ({file_info.get('size_formatted', 'Unknown')})" if file_info.get('size_formatted') else ""
+                    print(f"      • {file_info['name']}{size_info}")
+                if len(dir_comp['master_only']) > 5:
+                    print(f"      ... and {len(dir_comp['master_only']) - 5} more files")
+            
+            # Files only on slave
+            if dir_comp['slave_only']:
+                print(f"\n   🥽 SLAVE ONLY ({len(dir_comp['slave_only'])} files):")
+                for file_info in dir_comp['slave_only'][:5]:
+                    size_info = f" ({file_info.get('size_formatted', 'Unknown')})" if file_info.get('size_formatted') else ""
+                    print(f"      • {file_info['name']}{size_info}")
+                if len(dir_comp['slave_only']) > 5:
+                    print(f"      ... and {len(dir_comp['slave_only']) - 5} more files")
+            
+            # Common files
+            if dir_comp['common_files']:
+                print(f"\n   🤝 COMMON FILES ({len(dir_comp['common_files'])} files):")
+                for file_info in dir_comp['common_files'][:3]:
+                    print(f"      • {file_info['name']} (Master: {file_info.get('master_size_formatted', 'Unknown')}, Slave: {file_info.get('slave_size_formatted', 'Unknown')})")
+                if len(dir_comp['common_files']) > 3:
+                    print(f"      ... and {len(dir_comp['common_files']) - 3} more files")
+            
+            # Size differences
+            if dir_comp['size_differences']:
+                print(f"\n   ⚠️  SIZE DIFFERENCES ({len(dir_comp['size_differences'])} files):")
+                for file_info in dir_comp['size_differences']:
+                    print(f"      • {file_info['name']}: Master {file_info.get('master_size_formatted', 'Unknown')} ≠ Slave {file_info.get('slave_size_formatted', 'Unknown')}")
+        
+        print()
+    
+    def _format_file_size(self, bytes_size: int) -> str:
+        """Format file size in human readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_size < 1024:
+                return f"{bytes_size:.1f}{unit}"
+            bytes_size /= 1024
+        return f"{bytes_size:.1f}TB"
 
     def cmd_fetch_data(self, args) -> int:
         """Handle fetch data command (tags + films)"""
@@ -590,14 +762,14 @@ class EldersVRCLI:
             return False
 
     def _transfer_to_master(self, serial: str, progress: TransferProgress, args) -> bool:
-        """Transfer data to master device"""
+        """Transfer data to master device (low-res videos only)"""
         json_path = f"{self.config['paths']['local_downloads']}/new_data.json"
         videos_dir = f"{self.config['paths']['local_downloads']}/videos"
         images_dir = f"{self.config['paths']['local_downloads']}/images"
 
         success = True
 
-        self.logger.info(f"Transferring to master device {serial}...")
+        self.logger.info(f"Transferring to master device {serial} (low-res videos only)...")
 
         # Clear cache and logs first
         self.logger.info(f"Clearing existing files on master device {serial}...")
@@ -634,21 +806,28 @@ class EldersVRCLI:
                 progress.update_json_status(serial, 'failed')
                 success = False
 
-        # Transfer videos
+        # Transfer videos (low-res only for master device)
         if not args.json_only and os.path.exists(videos_dir):
-            video_files = len([f for f in os.listdir(videos_dir) if f.endswith('.mp4')])
-            progress.update_videos_progress(serial, 0, video_files, 'in_progress')
+            # Filter for low-res videos only (files with 'lowres_' prefix)
+            low_res_files = [f for f in os.listdir(videos_dir) if f.startswith('lowres_') and f.endswith('.mp4')]
+            progress.update_videos_progress(serial, 0, len(low_res_files), 'in_progress')
 
-            # Create callback for real-time updates
-            def video_progress_callback(current, total):
+            self.logger.info(f"Transferring {len(low_res_files)} low-res videos to master device {serial}")
+
+            # Create callback for real-time updates with percentage
+            def video_progress_callback(current, total, current_file_progress=0):
                 progress.update_videos_progress(serial, current, total, 'in_progress')
+                if current_file_progress > 0:
+                    print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos(serial, videos_dir, video_progress_callback)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, low_res_files, video_progress_callback)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
+                print()  # New line after progress
             else:
                 progress.update_videos_progress(serial, video_success, video_total, 'failed')
+                print()  # New line after progress
                 success = False
 
         # Transfer images
@@ -657,29 +836,33 @@ class EldersVRCLI:
                              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))])
             progress.update_images_progress(serial, 0, image_files, 'in_progress')
 
-            # Create callback for real-time updates
-            def image_progress_callback(current, total):
+            # Create callback for real-time updates with percentage
+            def image_progress_callback(current, total, current_file_progress=0):
                 progress.update_images_progress(serial, current, total, 'in_progress')
+                if current_file_progress > 0:
+                    print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
             image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
+                print()  # New line after progress
             else:
                 progress.update_images_progress(serial, image_success, image_total, 'failed')
+                print()  # New line after progress
                 success = False
 
         return success
 
     def _transfer_to_slave(self, serial: str, progress: TransferProgress, args) -> bool:
-        """Transfer data to slave device"""
+        """Transfer data to slave device (high-res videos only)"""
         json_path = f"{self.config['paths']['local_downloads']}/new_data.json"
         videos_dir = f"{self.config['paths']['local_downloads']}/videos"
         images_dir = f"{self.config['paths']['local_downloads']}/images"
 
         success = True
 
-        self.logger.info(f"Transferring to slave device {serial}...")
+        self.logger.info(f"Transferring to slave device {serial} (high-res videos only)...")
 
         # Clear cache and logs first
         self.logger.info(f"Clearing existing files on slave device {serial}...")
@@ -702,21 +885,28 @@ class EldersVRCLI:
                 progress.update_json_status(serial, 'failed')
                 success = False
 
-        # Transfer videos
+        # Transfer videos (high-res only for slave device)
         if not args.json_only and os.path.exists(videos_dir):
-            video_files = len([f for f in os.listdir(videos_dir) if f.endswith('.mp4')])
-            progress.update_videos_progress(serial, 0, video_files, 'in_progress')
+            # Filter for high-res videos only (files with 'highres_' prefix)
+            high_res_files = [f for f in os.listdir(videos_dir) if f.startswith('highres_') and f.endswith('.mp4')]
+            progress.update_videos_progress(serial, 0, len(high_res_files), 'in_progress')
 
-            # Create callback for real-time updates
-            def video_progress_callback(current, total):
+            self.logger.info(f"Transferring {len(high_res_files)} high-res videos to slave device {serial}")
+
+            # Create callback for real-time updates with percentage
+            def video_progress_callback(current, total, current_file_progress=0):
                 progress.update_videos_progress(serial, current, total, 'in_progress')
+                if current_file_progress > 0:
+                    print(f"\rTransferring video {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
-            video_success, video_total = self.adb_manager.push_videos(serial, videos_dir, video_progress_callback)
+            video_success, video_total = self.adb_manager.push_videos_filtered(serial, videos_dir, high_res_files, video_progress_callback)
 
             if video_success == video_total:
                 progress.update_videos_progress(serial, video_success, video_total, 'completed')
+                print()  # New line after progress
             else:
                 progress.update_videos_progress(serial, video_success, video_total, 'failed')
+                print()  # New line after progress
                 success = False
 
         # Transfer images
@@ -725,16 +915,20 @@ class EldersVRCLI:
                              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))])
             progress.update_images_progress(serial, 0, image_files, 'in_progress')
 
-            # Create callback for real-time updates
-            def image_progress_callback(current, total):
+            # Create callback for real-time updates with percentage
+            def image_progress_callback(current, total, current_file_progress=0):
                 progress.update_images_progress(serial, current, total, 'in_progress')
+                if current_file_progress > 0:
+                    print(f"\rTransferring image {current}/{total}: {current_file_progress:.1f}%", end='', flush=True)
 
             image_success, image_total = self.adb_manager.push_images(serial, images_dir, image_progress_callback)
 
             if image_success == image_total:
                 progress.update_images_progress(serial, image_success, image_total, 'completed')
+                print()  # New line after progress
             else:
                 progress.update_images_progress(serial, image_success, image_total, 'failed')
+                print()  # New line after progress
                 success = False
 
         return success
@@ -899,6 +1093,13 @@ class EldersVRCLI:
         deploy_parser.add_argument('--skip-auth', action='store_true', help='Skip authentication')
         deploy_parser.add_argument('--skip-fetch', action='store_true', help='Skip data fetching')
         deploy_parser.add_argument('--skip-download', action='store_true', help='Skip asset download')
+        
+        # List directories command
+        list_dir_parser = subparsers.add_parser('list-directories', help='List and compare EldersVR directories on devices')
+        list_dir_group = list_dir_parser.add_mutually_exclusive_group()
+        list_dir_group.add_argument('--device', help='List directories on specific device by serial')
+        list_dir_group.add_argument('--compare', action='store_true', help='Compare directories between master and slave devices')
+        list_dir_parser.add_argument('--detailed', action='store_true', help='Show detailed file information including sizes and dates')
 
         # Parse arguments
         args = parser.parse_args()
@@ -919,6 +1120,7 @@ class EldersVRCLI:
             'auth': self.cmd_auth,
             'logout': self.cmd_logout,
             'list-devices': self.cmd_list_devices,
+            'list-directories': self.cmd_list_directories,
             'verify': self.cmd_verify,
             'fetch-data': self.cmd_fetch_data,
             'download-videos': self.cmd_download_videos,

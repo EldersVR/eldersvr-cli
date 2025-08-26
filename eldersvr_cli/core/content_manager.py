@@ -238,6 +238,49 @@ class ContentManager:
         success = self.download_file(url, local_path, progress_callback=progress_callback)
         return success, file_type, os.path.basename(local_path)
     
+    def check_existing_files(self, download_tasks: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Check which files already exist and get user confirmation for overrides"""
+        existing_files = []
+        tasks_to_download = []
+        
+        for task in download_tasks:
+            if os.path.exists(task['local_path']):
+                file_size = os.path.getsize(task['local_path'])
+                filename = os.path.basename(task['local_path'])
+                existing_files.append(f"{filename} ({self._format_file_size(file_size)})")
+            else:
+                tasks_to_download.append(task)
+        
+        if existing_files:
+            print(f"\n{len(existing_files)} files already exist:")
+            for i, file_info in enumerate(existing_files[:5], 1):  # Show first 5
+                print(f"  {i}. {file_info}")
+            
+            if len(existing_files) > 5:
+                print(f"  ... and {len(existing_files) - 5} more files")
+            
+            while True:
+                choice = input("\nDo you want to (o)verride existing files, (s)kip them, or (c)ancel? [o/s/c]: ").lower().strip()
+                if choice in ['o', 'override']:
+                    return download_tasks, []  # Download all
+                elif choice in ['s', 'skip']:
+                    return tasks_to_download, [os.path.basename(task['local_path']) for task in download_tasks if task not in tasks_to_download]
+                elif choice in ['c', 'cancel']:
+                    print("Download cancelled by user")
+                    return [], []
+                else:
+                    print("Please enter 'o' for override, 's' for skip, or 'c' for cancel")
+        
+        return download_tasks, []
+    
+    def _format_file_size(self, bytes_size: int) -> str:
+        """Format file size in human readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_size < 1024:
+                return f"{bytes_size:.1f}{unit}"
+            bytes_size /= 1024
+        return f"{bytes_size:.1f}TB"
+
     def download_all_assets(self, data: Dict[str, Any], parallel: bool = True, max_display_files: int = 3) -> Dict[str, int]:
         """Download all videos, thumbnails, and tag images with optional parallel processing"""
         downloads_dir = self.config['paths']['local_downloads']
@@ -255,7 +298,8 @@ class ContentManager:
             'tag_images': 0,
             'failed_downloads': 0,
             'total_files': 0,
-            'completed_files': 0
+            'completed_files': 0,
+            'skipped_files': 0
         }
         
         # Prepare download tasks
@@ -294,12 +338,24 @@ class ContentManager:
                     'file_type': 'tag_images'
                 })
         
-        download_stats['total_files'] = len(download_tasks)
+        # Check for existing files and get user confirmation
+        tasks_to_download, skipped_files = self.check_existing_files(download_tasks)
         
-        if parallel and len(download_tasks) > 1:
-            return self._download_assets_parallel(download_tasks, download_stats, max_display_files)
+        if not tasks_to_download:
+            download_stats['total_files'] = len(download_tasks)
+            download_stats['skipped_files'] = len(skipped_files)
+            return download_stats
+        
+        download_stats['total_files'] = len(tasks_to_download)
+        download_stats['skipped_files'] = len(skipped_files)
+        
+        if len(skipped_files) > 0:
+            print(f"Skipping {len(skipped_files)} existing files")
+        
+        if parallel and len(tasks_to_download) > 1:
+            return self._download_assets_parallel(tasks_to_download, download_stats, max_display_files)
         else:
-            return self._download_assets_sequential(download_tasks, download_stats)
+            return self._download_assets_sequential(tasks_to_download, download_stats)
     
     def _download_assets_parallel(self, download_tasks: List[Dict[str, Any]], 
                                   download_stats: Dict[str, int], max_display_files: int = 3) -> Dict[str, int]:

@@ -59,6 +59,12 @@ run-deploy: ## Run complete deployment
 run-verify: ## Verify deployment
 	$(PYTHON) -m eldersvr_cli.cli verify --deployment
 
+run-list-dirs: ## List directories on configured devices
+	$(PYTHON) -m eldersvr_cli.cli list-directories
+
+run-compare-dirs: ## Compare directories between master and slave
+	$(PYTHON) -m eldersvr_cli.cli list-directories --compare
+
 build: ## Build distribution packages
 	$(PYTHON) setup.py sdist bdist_wheel
 

@@ -7,7 +7,7 @@
   },
   "paths": {
     "local_downloads": "./downloads",
-    "device_path": "/storage/emulated/0/Download/EldersVR",
+    "device_path": "/storage/emulated/0/Android/data/com.q42.eldersvr/files/EldersVR",
     "json_filename": "new_data.json"
   },
   "devices": {
@@ -18,7 +18,7 @@
     "email": "clionboarding@eldervr.com",
     "password": "clionboarding@eldervr.com"
   },
-  "target_path": "/storage/emulated/0/Download/EldersVR",
+  "target_path": "/storage/emulated/0/Android/data/com.q42.eldersvr/files/EldersVR",
   "required_files": [
     "new_data.json"
   ],

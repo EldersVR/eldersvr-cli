@@ -6,6 +6,7 @@ Handles ADB connectivity, storage verification, and file transfers
 import subprocess
 import os
 import glob
+import time
 from typing import List, Tuple, Optional, Dict
 from ..utils import get_logger
 
@@ -37,7 +38,7 @@ class CLIAccessControl:
 class ADBManager:
     """Manages ADB operations for EldersVR device onboarding"""
 
-    def __init__(self, device_path: str = "/storage/emulated/0/Download/EldersVR"):
+    def __init__(self, device_path: str = "/storage/emulated/0/Android/data/com.q42.eldersvr/files/EldersVR"):
         self.eldersvr_path = device_path
         self.video_path = f"{self.eldersvr_path}/Video"
         self.image_path = f"{self.eldersvr_path}/Image"
@@ -475,40 +476,71 @@ class ADBManager:
             raise FileNotFoundError(f"Local videos directory not found: {local_videos_dir}")
 
         video_files = glob.glob(f"{local_videos_dir}/*.mp4")
+        return self._push_video_files(serial, local_videos_dir, [os.path.basename(f) for f in video_files], progress_callback)
+    
+    @CLIAccessControl.require_cli_access("transfer")
+    def push_videos_filtered(self, serial: str, local_videos_dir: str, filtered_files: List[str], progress_callback=None) -> Tuple[int, int]:
+        """Push filtered video files to device with real-time progress. Returns (success_count, total_count)"""
+        if not os.path.exists(local_videos_dir):
+            raise FileNotFoundError(f"Local videos directory not found: {local_videos_dir}")
+        
+        return self._push_video_files(serial, local_videos_dir, filtered_files, progress_callback)
+    
+    def _push_video_files(self, serial: str, local_videos_dir: str, file_list: List[str], progress_callback=None) -> Tuple[int, int]:
+        """Internal method to push specific video files with real-time progress tracking"""
         success_count = 0
         
-        self.logger.info(f"Starting transfer of {len(video_files)} video files to {serial}")
+        self.logger.info(f"Starting transfer of {len(file_list)} video files to {serial}")
 
-        for idx, video_file in enumerate(video_files):
-            filename = os.path.basename(video_file)
+        for idx, filename in enumerate(file_list, 1):
+            video_file = os.path.join(local_videos_dir, filename)
             remote_path = f"{self.video_path}/{filename}"
-            file_size = os.path.getsize(video_file)
             
+            if not os.path.exists(video_file):
+                self.logger.warning(f"❌ Video file not found: {video_file}")
+                continue
+                
+            file_size = os.path.getsize(video_file)
             self.logger.debug(f"Transferring {filename} ({self._format_file_size(file_size)})")
 
             try:
-                result = subprocess.run([
+                # Start ADB push with progress monitoring
+                process = subprocess.Popen([
                     "adb", "-s", serial, "push",
                     video_file, remote_path
-                ], capture_output=True, text=True, timeout=300)  # 5 minutes timeout for large files
-
-                if result.returncode == 0:
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                
+                # Monitor transfer progress
+                start_time = time.time()
+                while process.poll() is None:
+                    elapsed = time.time() - start_time
+                    # Estimate progress based on elapsed time (rough estimate)
+                    if file_size > 0:
+                        estimated_speed = 10 * 1024 * 1024  # 10 MB/s estimate
+                        estimated_progress = min(95, (elapsed * estimated_speed / file_size) * 100)
+                        if progress_callback:
+                            progress_callback(idx - 1, len(file_list), estimated_progress)
+                    time.sleep(0.5)
+                
+                stdout, stderr = process.communicate()
+                
+                if process.returncode == 0:
                     success_count += 1
                     self.logger.debug(f"✅ Successfully transferred {filename}")
+                    if progress_callback:
+                        progress_callback(success_count, len(file_list), 100)
                 else:
-                    self.logger.warning(f"❌ Failed to transfer {filename}: {result.stderr}")
+                    self.logger.warning(f"❌ Failed to transfer {filename}: {stderr}")
+                    if progress_callback:
+                        progress_callback(success_count, len(file_list), 0)
 
-                # Update progress after each file
+            except Exception as e:
+                self.logger.error(f"❌ Error transferring {filename}: {e}")
                 if progress_callback:
-                    progress_callback(success_count, len(video_files))
-
-            except subprocess.TimeoutExpired:
-                self.logger.error(f"❌ Timeout transferring {filename}")
-                if progress_callback:
-                    progress_callback(success_count, len(video_files))
+                    progress_callback(success_count, len(file_list), 0)
                 continue
 
-        return success_count, len(video_files)
+        return success_count, len(file_list)
 
     @CLIAccessControl.require_cli_access("transfer")
     def push_images(self, serial: str, local_images_dir: str, progress_callback=None) -> Tuple[int, int]:
@@ -527,7 +559,7 @@ class ADBManager:
         
         self.logger.info(f"Starting transfer of {len(image_files)} image files to {serial}")
 
-        for idx, image_file in enumerate(image_files):
+        for idx, image_file in enumerate(image_files, 1):
             filename = os.path.basename(image_file)
             remote_path = f"{self.image_path}/{filename}"
             file_size = os.path.getsize(image_file)
@@ -535,25 +567,40 @@ class ADBManager:
             self.logger.debug(f"Transferring {filename} ({self._format_file_size(file_size)})")
 
             try:
-                result = subprocess.run([
+                # Start ADB push with progress monitoring
+                process = subprocess.Popen([
                     "adb", "-s", serial, "push",
                     image_file, remote_path
-                ], capture_output=True, text=True, timeout=60)
-
-                if result.returncode == 0:
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                
+                # Monitor transfer progress
+                start_time = time.time()
+                while process.poll() is None:
+                    elapsed = time.time() - start_time
+                    # Estimate progress based on elapsed time (images are usually small and fast)
+                    if file_size > 0:
+                        estimated_speed = 20 * 1024 * 1024  # 20 MB/s estimate for images
+                        estimated_progress = min(95, (elapsed * estimated_speed / file_size) * 100)
+                        if progress_callback:
+                            progress_callback(idx - 1, len(image_files), estimated_progress)
+                    time.sleep(0.2)  # Shorter interval for images
+                
+                stdout, stderr = process.communicate()
+                
+                if process.returncode == 0:
                     success_count += 1
                     self.logger.debug(f"✅ Successfully transferred {filename}")
+                    if progress_callback:
+                        progress_callback(success_count, len(image_files), 100)
                 else:
-                    self.logger.warning(f"❌ Failed to transfer {filename}: {result.stderr}")
+                    self.logger.warning(f"❌ Failed to transfer {filename}: {stderr}")
+                    if progress_callback:
+                        progress_callback(success_count, len(image_files), 0)
 
-                # Update progress after each file  
+            except Exception as e:
+                self.logger.error(f"❌ Error transferring {filename}: {e}")
                 if progress_callback:
-                    progress_callback(success_count, len(image_files))
-
-            except subprocess.TimeoutExpired:
-                self.logger.error(f"❌ Timeout transferring {filename}")
-                if progress_callback:
-                    progress_callback(success_count, len(image_files))
+                    progress_callback(success_count, len(image_files), 0)
                 continue
 
         return success_count, len(image_files)
@@ -640,6 +687,204 @@ class ADBManager:
             pass
 
         return verification
+    
+    def list_directory_contents(self, serial: str, detailed: bool = False) -> Dict[str, Any]:
+        """List contents of EldersVR directory on device"""
+        directory_info = {
+            'device_serial': serial,
+            'base_path': self.eldersvr_path,
+            'video_path': self.video_path,
+            'image_path': self.image_path,
+            'directories': {},
+            'files': {},
+            'total_size': 0,
+            'errors': []
+        }
+        
+        try:
+            # Check if base directory exists
+            base_check = subprocess.run([
+                "adb", "-s", serial, "shell",
+                "test", "-d", self.eldersvr_path
+            ], capture_output=True, timeout=10)
+            
+            if base_check.returncode != 0:
+                directory_info['errors'].append(f"Base directory {self.eldersvr_path} does not exist")
+                return directory_info
+            
+            # List all directories and their contents
+            directories_to_check = {
+                'root': self.eldersvr_path,
+                'videos': self.video_path,
+                'images': self.image_path
+            }
+            
+            for dir_name, dir_path in directories_to_check.items():
+                try:
+                    # Check if directory exists
+                    dir_check = subprocess.run([
+                        "adb", "-s", serial, "shell",
+                        "test", "-d", dir_path
+                    ], capture_output=True, timeout=10)
+                    
+                    if dir_check.returncode != 0:
+                        directory_info['directories'][dir_name] = {
+                            'path': dir_path,
+                            'exists': False,
+                            'files': [],
+                            'file_count': 0,
+                            'total_size': 0
+                        }
+                        continue
+                    
+                    # List files in directory
+                    if detailed:
+                        # Get detailed file listing with sizes
+                        ls_result = subprocess.run([
+                            "adb", "-s", serial, "shell",
+                            "ls", "-la", dir_path
+                        ], capture_output=True, text=True, timeout=30)
+                    else:
+                        # Simple file listing
+                        ls_result = subprocess.run([
+                            "adb", "-s", serial, "shell",
+                            "ls", dir_path
+                        ], capture_output=True, text=True, timeout=30)
+                    
+                    files_info = []
+                    dir_total_size = 0
+                    
+                    if ls_result.returncode == 0 and ls_result.stdout.strip():
+                        lines = ls_result.stdout.strip().split('\n')
+                        
+                        for line in lines:
+                            line = line.strip()
+                            if not line or line.startswith('total'):
+                                continue
+                                
+                            if detailed and line.startswith('-'):
+                                # Parse detailed listing (permissions size date filename)
+                                parts = line.split()
+                                if len(parts) >= 5:
+                                    filename = ' '.join(parts[8:])  # Handle filenames with spaces
+                                    size = int(parts[4]) if parts[4].isdigit() else 0
+                                    files_info.append({
+                                        'name': filename,
+                                        'size': size,
+                                        'size_formatted': self._format_file_size(size),
+                                        'permissions': parts[0],
+                                        'date': f"{parts[5]} {parts[6]} {parts[7]}"
+                                    })
+                                    dir_total_size += size
+                            elif not detailed:
+                                # Simple listing - just filenames
+                                if line and not line.endswith('/'):
+                                    files_info.append({
+                                        'name': line,
+                                        'size': None,
+                                        'size_formatted': 'Unknown'
+                                    })
+                    
+                    directory_info['directories'][dir_name] = {
+                        'path': dir_path,
+                        'exists': True,
+                        'files': files_info,
+                        'file_count': len(files_info),
+                        'total_size': dir_total_size,
+                        'total_size_formatted': self._format_file_size(dir_total_size) if dir_total_size > 0 else '0B'
+                    }
+                    
+                    directory_info['total_size'] += dir_total_size
+                    
+                except subprocess.TimeoutExpired:
+                    directory_info['errors'].append(f"Timeout listing directory: {dir_path}")
+                except Exception as e:
+                    directory_info['errors'].append(f"Error listing {dir_path}: {str(e)}")
+            
+            # Get device storage info
+            try:
+                storage_info = self.get_device_storage_info(serial)
+                if storage_info:
+                    directory_info['storage_info'] = storage_info
+            except Exception as e:
+                directory_info['errors'].append(f"Could not get storage info: {str(e)}")
+                
+        except Exception as e:
+            directory_info['errors'].append(f"General error: {str(e)}")
+        
+        directory_info['total_size_formatted'] = self._format_file_size(directory_info['total_size'])
+        return directory_info
+    
+    def compare_devices_directories(self, master_serial: str, slave_serial: str) -> Dict[str, Any]:
+        """Compare directory contents between master and slave devices"""
+        self.logger.info(f"Comparing directories between master ({master_serial}) and slave ({slave_serial})")
+        
+        # Get directory listings for both devices
+        master_info = self.list_directory_contents(master_serial, detailed=True)
+        slave_info = self.list_directory_contents(slave_serial, detailed=True)
+        
+        comparison = {
+            'master': master_info,
+            'slave': slave_info,
+            'comparison': {
+                'videos': self._compare_directory_files(master_info, slave_info, 'videos'),
+                'images': self._compare_directory_files(master_info, slave_info, 'images'),
+                'root': self._compare_directory_files(master_info, slave_info, 'root')
+            }
+        }
+        
+        return comparison
+    
+    def _compare_directory_files(self, master_info: Dict, slave_info: Dict, dir_type: str) -> Dict[str, Any]:
+        """Compare files between two directory listings"""
+        master_dir = master_info['directories'].get(dir_type, {})
+        slave_dir = slave_info['directories'].get(dir_type, {})
+        
+        master_files = {f['name']: f for f in master_dir.get('files', [])}
+        slave_files = {f['name']: f for f in slave_dir.get('files', [])}
+        
+        comparison = {
+            'master_only': [],
+            'slave_only': [], 
+            'common_files': [],
+            'size_differences': [],
+            'master_count': len(master_files),
+            'slave_count': len(slave_files),
+            'master_total_size': master_dir.get('total_size', 0),
+            'slave_total_size': slave_dir.get('total_size', 0)
+        }
+        
+        # Find master-only files
+        for filename, file_info in master_files.items():
+            if filename not in slave_files:
+                comparison['master_only'].append(file_info)
+        
+        # Find slave-only files
+        for filename, file_info in slave_files.items():
+            if filename not in master_files:
+                comparison['slave_only'].append(file_info)
+        
+        # Find common files and size differences
+        for filename in master_files.keys():
+            if filename in slave_files:
+                master_file = master_files[filename]
+                slave_file = slave_files[filename]
+                
+                common_file = {
+                    'name': filename,
+                    'master_size': master_file.get('size', 0),
+                    'slave_size': slave_file.get('size', 0),
+                    'master_size_formatted': master_file.get('size_formatted', 'Unknown'),
+                    'slave_size_formatted': slave_file.get('size_formatted', 'Unknown')
+                }
+                
+                comparison['common_files'].append(common_file)
+                
+                # Check for size differences
+                if master_file.get('size') != slave_file.get('size'):
+                    comparison['size_differences'].append(common_file)
+        
+        return comparison
 
     @CLIAccessControl.require_cli_access("sync")
     def clean_eldersvr_directory(self, serial: str) -> bool:
