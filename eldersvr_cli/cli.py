@@ -1019,6 +1019,7 @@ class EldersVRCLI:
                     local_files_to_transfer[basename] = filename
         
         # Check for conflicts with actual device contents
+        files_to_skip = set()
         if local_files_to_transfer:
             conflict_check = self.adb_manager.check_transfer_conflicts(serial, local_files_to_transfer, "Slave")
             
@@ -1039,6 +1040,8 @@ class EldersVRCLI:
                     
                     if choice in ['sa', 'skip_all']:
                         self._conflict_action_all = 'skip_all'
+                        # Add conflicting files to skip list
+                        files_to_skip = {conflict['filename'] for conflict in conflict_check['conflicts']}
                         print(f"Will skip {len(conflict_check['conflicts'])} existing files and transfer {len(conflict_check['safe_files'])} new files")
                         break
                     elif choice in ['oa', 'override_all']:
