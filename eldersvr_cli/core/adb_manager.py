@@ -573,9 +573,9 @@ class ADBManager:
                 while process.poll() is None:
                     elapsed = time.time() - start_time
                     # Estimate progress based on elapsed time (rough estimate)
-                    if file_size > 0:
+                    if local_file_size > 0:
                         estimated_speed = 10 * 1024 * 1024  # 10 MB/s estimate
-                        estimated_progress = min(95, (elapsed * estimated_speed / file_size) * 100)
+                        estimated_progress = min(95, (elapsed * estimated_speed / local_file_size) * 100)
                         if progress_callback:
                             progress_callback(idx - 1, len(file_list), estimated_progress)
                     time.sleep(0.5)
@@ -653,9 +653,9 @@ class ADBManager:
                 while process.poll() is None:
                     elapsed = time.time() - start_time
                     # Estimate progress based on elapsed time (images are usually small and fast)
-                    if file_size > 0:
+                    if local_file_size > 0:
                         estimated_speed = 20 * 1024 * 1024  # 20 MB/s estimate for images
-                        estimated_progress = min(95, (elapsed * estimated_speed / file_size) * 100)
+                        estimated_progress = min(95, (elapsed * estimated_speed / local_file_size) * 100)
                         if progress_callback:
                             progress_callback(idx - 1, len(image_files), estimated_progress)
                     time.sleep(0.2)  # Shorter interval for images
