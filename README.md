@@ -124,6 +124,9 @@ eldersvr-onboard download-videos --quality high    # High-res only
 eldersvr-onboard download-videos --quality low     # Low-res only
 eldersvr-onboard download-videos --quality both    # Both qualities (default)
 
+# Download only images and thumbnails (no videos)
+eldersvr-onboard download-videos --images-only
+
 # Sequential downloads (slower but more reliable)
 eldersvr-onboard download-videos --sequential
 

@@ -29,15 +29,15 @@ class EldersVRCLI:
     def load_config(self, config_path: str = None) -> Dict[str, Any]:
         """Load configuration from file with enhanced validation and logging"""
         self.logger.info("Starting configuration loading process...")
-        
+
         if config_path is None:
             # Look for config in common locations
             config_locations = [
                 './eldersvr_config.json',
-                '~/.eldersvr/config.json', 
+                '~/.eldersvr/config.json',
                 '/etc/eldersvr/config.json'
             ]
-            
+
             self.logger.info("Searching for configuration file in standard locations:")
             for location in config_locations:
                 self.logger.debug(f"  Checking: {location}")
@@ -51,35 +51,35 @@ class EldersVRCLI:
 
         if config_path and os.path.exists(config_path):
             self.logger.info(f"Attempting to load configuration from: {config_path}")
-            
+
             # Verify file permissions before loading
             if not self._verify_config_file_permissions(config_path):
                 self.logger.error(f"Configuration file permission check failed: {config_path}")
                 return self._fallback_to_default_config()
-            
+
             try:
                 with open(config_path, 'r') as f:
                     loaded_config = json.load(f)
                     self.logger.info(f"✅ Successfully loaded configuration from {config_path}")
-                    
+
                     # Merge with default config to ensure all required keys exist
                     self.config = self._merge_with_default_config(loaded_config)
-                    
+
                     # Validate the loaded configuration
                     validation_issues = self._validate_config(self.config)
                     if validation_issues:
                         self.logger.warning("Configuration validation issues found:")
                         for issue in validation_issues:
                             self.logger.warning(f"  - {issue}")
-                    
+
                     self.logger.info("Configuration summary:")
                     self.logger.info(f"  API URL: {self.config['backend']['api_url']}")
                     self.logger.info(f"  Device path: {self.config['paths']['device_path']}")
                     self.logger.info(f"  Local downloads: {self.config['paths']['local_downloads']}")
-                    
+
                     self._initialize_managers()
                     return self.config
-                    
+
             except json.JSONDecodeError as e:
                 self.logger.error(f"❌ Invalid JSON in config file {config_path}: {e}")
                 return self._fallback_to_default_config()
@@ -100,9 +100,9 @@ class EldersVRCLI:
             if not os.access(config_path, os.R_OK):
                 self.logger.error(f"❌ No read permission for config file: {config_path}")
                 return False
-            
+
             self.logger.debug(f"✅ Read permission verified for: {config_path}")
-            
+
             # Test write permissions (for potential updates)
             if not os.access(config_path, os.W_OK):
                 self.logger.warning(f"⚠️ No write permission for config file: {config_path}")
@@ -110,16 +110,16 @@ class EldersVRCLI:
                 # Still return True as read-only config is acceptable
             else:
                 self.logger.debug(f"✅ Write permission verified for: {config_path}")
-            
+
             # Check file size (avoid loading extremely large files)
             file_size = os.path.getsize(config_path)
             if file_size > 1024 * 1024:  # 1MB limit
                 self.logger.error(f"❌ Configuration file too large ({file_size} bytes): {config_path}")
                 return False
-            
+
             self.logger.debug(f"✅ File size check passed ({file_size} bytes)")
             return True
-            
+
         except OSError as e:
             self.logger.error(f"❌ Error checking config file permissions: {e}")
             return False
@@ -128,19 +128,19 @@ class EldersVRCLI:
         """Fallback to default configuration with logging"""
         self.logger.info("🔄 Falling back to default configuration")
         self.config = self._get_default_config()
-        
+
         self.logger.info("Default configuration loaded:")
         self.logger.info(f"  API URL: {self.config['backend']['api_url']}")
         self.logger.info(f"  Device path: {self.config['paths']['device_path']}")
         self.logger.info(f"  Local downloads: {self.config['paths']['local_downloads']}")
-        
+
         self._initialize_managers()
         return self.config
 
     def _merge_with_default_config(self, loaded_config: Dict[str, Any]) -> Dict[str, Any]:
         """Merge loaded config with default to ensure all required keys exist"""
         default_config = self._get_default_config()
-        
+
         # Deep merge - loaded config overrides default
         def deep_merge(default: dict, loaded: dict) -> dict:
             result = default.copy()
@@ -150,7 +150,7 @@ class EldersVRCLI:
                 else:
                     result[key] = value
             return result
-        
+
         merged = deep_merge(default_config, loaded_config)
         self.logger.debug("✅ Configuration merged with defaults")
         return merged
@@ -158,34 +158,34 @@ class EldersVRCLI:
     def _validate_config(self, config: Dict[str, Any]) -> List[str]:
         """Validate configuration and return list of issues"""
         issues = []
-        
+
         # Required sections
         required_sections = ['backend', 'paths', 'devices', 'auth']
         for section in required_sections:
             if section not in config:
                 issues.append(f"Missing required section: {section}")
-        
+
         # Backend validation
         if 'backend' in config:
             required_backend_keys = ['api_url', 'auth_endpoint', 'tags_endpoint', 'films_endpoint']
             for key in required_backend_keys:
                 if key not in config['backend']:
                     issues.append(f"Missing required backend key: {key}")
-        
+
         # Paths validation
         if 'paths' in config:
             required_path_keys = ['local_downloads', 'device_path', 'json_filename']
             for key in required_path_keys:
                 if key not in config['paths']:
                     issues.append(f"Missing required paths key: {key}")
-        
+
         # Auth validation
         if 'auth' in config:
             if not config['auth'].get('email'):
                 issues.append("Missing or empty auth email")
             if not config['auth'].get('password'):
                 issues.append("Missing or empty auth password")
-        
+
         return issues
 
     def _get_default_config(self) -> Dict[str, Any]:
@@ -248,10 +248,10 @@ class EldersVRCLI:
             self.logger.info("Authentication successful!")
             self.logger.info(f"User: {user_info.get('name', 'Unknown')} ({user_info.get('email', 'Unknown')})")
             self.logger.info(f"Company: {company_info.get('name', 'Unknown')}")
-            
+
             # Create credential.json for master device transfer
             self._create_credential_json(email, password)
-            
+
             return 0
         else:
             self.logger.error("Authentication failed")
@@ -374,70 +374,70 @@ class EldersVRCLI:
     def cmd_list_directories(self, args) -> int:
         """Handle list directories command"""
         self._ensure_managers_initialized()
-        
+
         try:
             if args.compare:
                 # Compare master and slave directories
                 master_serial = self.config['devices']['master_serial']
                 slave_serial = self.config['devices']['slave_serial']
-                
+
                 if not master_serial or not slave_serial:
                     self.logger.error("Both master and slave devices must be configured for comparison")
                     self.logger.info("Use 'select-devices' command to configure devices first")
                     return 1
-                
+
                 self.logger.info(f"Comparing directories between master ({master_serial}) and slave ({slave_serial})")
                 comparison = self.adb_manager.compare_devices_directories(master_serial, slave_serial)
-                
+
                 self._print_directory_comparison(comparison)
-                
+
             elif args.device:
                 # List specific device directory
                 self.logger.info(f"Listing directories on device {args.device}")
                 directory_info = self.adb_manager.list_directory_contents(args.device, detailed=args.detailed)
-                
+
                 self._print_device_directory_info(directory_info)
-                
+
             else:
                 # List both master and slave if configured
                 devices_to_check = []
-                
+
                 master_serial = self.config['devices']['master_serial']
                 slave_serial = self.config['devices']['slave_serial']
-                
+
                 if master_serial:
                     devices_to_check.append(('MASTER', master_serial))
                 if slave_serial:
                     devices_to_check.append(('SLAVE', slave_serial))
-                
+
                 if not devices_to_check:
                     self.logger.error("No devices configured. Use 'select-devices' command first.")
                     return 1
-                
+
                 for device_type, serial in devices_to_check:
                     print(f"\n{'='*60}")
                     print(f"{device_type} DEVICE: {serial}")
                     print(f"{'='*60}")
-                    
+
                     directory_info = self.adb_manager.list_directory_contents(serial, detailed=args.detailed)
                     self._print_device_directory_info(directory_info)
-            
+
             return 0
-            
+
         except Exception as e:
             self.logger.error(f"Failed to list directories: {e}")
             return 1
-    
+
     def _print_device_directory_info(self, directory_info: Dict[str, Any]):
         """Print formatted directory information for a single device"""
         print(f"Device: {directory_info['device_serial']}")
         print(f"Base Path: {directory_info['base_path']}")
-        
+
         if directory_info['errors']:
             print("\n⚠️  ERRORS:")
             for error in directory_info['errors']:
                 print(f"   {error}")
-        
+
         # Print storage info if available
         if 'storage_info' in directory_info:
             storage = directory_info['storage_info']
@@ -448,59 +448,59 @@ class EldersVRCLI:
                 print(f"   Available: {storage.get('available_space', 'Unknown')}")
             if 'used_space' in storage:
                 print(f"   EldersVR Used: {storage.get('used_space', 'Unknown')}")
-        
+
         print(f"\n📁 DIRECTORIES:")
         print(f"   Total EldersVR Size: {directory_info['total_size_formatted']}")
-        
+
         for dir_name, dir_info in directory_info['directories'].items():
             status = "✅" if dir_info['exists'] else "❌"
             print(f"\n   {status} {dir_name.upper()} ({dir_info['path']})")
-            
+
             if dir_info['exists']:
                 print(f"      Files: {dir_info['file_count']}")
                 print(f"      Size: {dir_info.get('total_size_formatted', '0B')}")
-                
+
                 if dir_info['files']:
                     print(f"      Contents:")
                     # Show first 10 files
                     for i, file_info in enumerate(dir_info['files'][:10]):
                         size_info = f" ({file_info.get('size_formatted', 'Unknown')})" if file_info.get('size_formatted') else ""
                         print(f"        {i+1:2d}. {file_info['name']}{size_info}")
-                    
+
                     if len(dir_info['files']) > 10:
                         print(f"        ... and {len(dir_info['files']) - 10} more files")
                 else:
                     print(f"      (empty directory)")
-        
+
         print()
-    
+
     def _print_directory_comparison(self, comparison: Dict[str, Any]):
         """Print formatted directory comparison between master and slave"""
         print("\n📊 DIRECTORY COMPARISON")
         print("=" * 60)
-        
+
         master = comparison['master']
         slave = comparison['slave']
         comp = comparison['comparison']
-        
+
         print(f"Master Device: {master['device_serial']}")
         print(f"Slave Device:  {slave['device_serial']}")
-        
+
         # Print errors if any
         all_errors = master['errors'] + slave['errors']
         if all_errors:
             print("\n⚠️  ERRORS:")
             for error in all_errors:
                 print(f"   {error}")
-        
+
         # Compare each directory type
         for dir_type in ['root', 'videos', 'images']:
             dir_comp = comp[dir_type]
-            
+
             print(f"\n📁 {dir_type.upper()} DIRECTORY COMPARISON:")
             print(f"   Master files: {dir_comp['master_count']} ({self._format_file_size(dir_comp['master_total_size'])})")
             print(f"   Slave files:  {dir_comp['slave_count']} ({self._format_file_size(dir_comp['slave_total_size'])})")
-            
+
             # Files only on master
             if dir_comp['master_only']:
                 print(f"\n   📱 MASTER ONLY ({len(dir_comp['master_only'])} files):")
@@ -509,7 +509,7 @@ class EldersVRCLI:
                     print(f"      • {file_info['name']}{size_info}")
                 if len(dir_comp['master_only']) > 5:
                     print(f"      ... and {len(dir_comp['master_only']) - 5} more files")
-            
+
             # Files only on slave
             if dir_comp['slave_only']:
                 print(f"\n   🥽 SLAVE ONLY ({len(dir_comp['slave_only'])} files):")
@@ -518,7 +518,7 @@ class EldersVRCLI:
                     print(f"      • {file_info['name']}{size_info}")
                 if len(dir_comp['slave_only']) > 5:
                     print(f"      ... and {len(dir_comp['slave_only']) - 5} more files")
-            
+
             # Common files
             if dir_comp['common_files']:
                 print(f"\n   🤝 COMMON FILES ({len(dir_comp['common_files'])} files):")
@@ -526,15 +526,15 @@ class EldersVRCLI:
                     print(f"      • {file_info['name']} (Master: {file_info.get('master_size_formatted', 'Unknown')}, Slave: {file_info.get('slave_size_formatted', 'Unknown')})")
                 if len(dir_comp['common_files']) > 3:
                     print(f"      ... and {len(dir_comp['common_files']) - 3} more files")
-            
+
             # Size differences
             if dir_comp['size_differences']:
                 print(f"\n   ⚠️  SIZE DIFFERENCES ({len(dir_comp['size_differences'])} files):")
                 for file_info in dir_comp['size_differences']:
                     print(f"      • {file_info['name']}: Master {file_info.get('master_size_formatted', 'Unknown')} ≠ Slave {file_info.get('slave_size_formatted', 'Unknown')}")
-        
+
         print()
-    
+
     def _format_file_size(self, bytes_size: int) -> str:
         """Format file size in human readable format"""
         for unit in ['B', 'KB', 'MB', 'GB']:
@@ -610,27 +610,29 @@ class EldersVRCLI:
             self.logger.error(f"Failed to read new_data.json: {e}")
             return 1
 
+        # Check if images-only mode is requested
+        images_only = getattr(args, 'images_only', False)
+
         # Determine download mode and apply overrides
         parallel_mode = not args.sequential if hasattr(args, 'sequential') else True
-        
+
         # Apply configuration overrides from command line arguments
         if 'download' not in self.config:
             self.config['download'] = {}
-            
+
         if hasattr(args, 'max_workers') and args.max_workers:
             self.config['download']['max_concurrent_downloads'] = args.max_workers
             self.logger.info(f"Using {args.max_workers} concurrent downloads")
-            
+
         if hasattr(args, 'timeout') and args.timeout:
             self.config['download']['timeout'] = args.timeout
             self.logger.info(f"Using {args.timeout}s timeout")
-            
+
         if hasattr(args, 'retry_attempts') and args.retry_attempts:
             self.config['download']['retry_attempts'] = args.retry_attempts
             self.logger.info(f"Using {args.retry_attempts} retry attempts")
-            
+
         mode_str = "parallel" if parallel_mode else "sequential"
-        self.logger.info(f"Starting {mode_str} download of all assets...")
 
         # Initialize content manager for downloads
         if not self.content_manager:
@@ -639,11 +641,21 @@ class EldersVRCLI:
         try:
             # Get display limit from command line arguments
             max_display_files = getattr(args, 'show_files', 3)
-            download_stats = self.content_manager.download_all_assets(data, parallel=parallel_mode, max_display_files=max_display_files)
+
+            if images_only:
+                self.logger.info(f"Starting {mode_str} download of images and thumbnails only...")
+                download_stats = self.content_manager.download_images_only(data, parallel=parallel_mode, max_display_files=max_display_files)
+            else:
+                asset_type = "all assets"
+                if hasattr(args, 'quality') and args.quality != 'both':
+                    asset_type = f"{args.quality}-res videos and images"
+                self.logger.info(f"Starting {mode_str} download of {asset_type}...")
+                download_stats = self.content_manager.download_all_assets(data, parallel=parallel_mode, max_display_files=max_display_files, quality=getattr(args, 'quality', 'both'))
 
             self.logger.info("Download completed!")
-            self.logger.info(f"High-res videos: {download_stats['videos_high']}")
-            self.logger.info(f"Low-res videos: {download_stats['videos_low']}")
+            if not images_only:
+                self.logger.info(f"High-res videos: {download_stats.get('videos_high', 0)}")
+                self.logger.info(f"Low-res videos: {download_stats.get('videos_low', 0)}")
             self.logger.info(f"Thumbnails: {download_stats['thumbnails']}")
             self.logger.info(f"Tag images: {download_stats['tag_images']}")
             self.logger.info(f"Total completed: {download_stats['completed_files']}/{download_stats['total_files']}")
@@ -695,7 +707,7 @@ class EldersVRCLI:
     def cmd_transfer(self, args) -> int:
         """Handle transfer command (CLI-only)"""
         self._ensure_managers_initialized()
-        
+
         # Reset conflict action state for this transfer
         self._conflict_action_all = None
 
@@ -748,20 +760,20 @@ class EldersVRCLI:
         """
         # Debug logging to track when conflicts are triggered
         self.logger.debug(f"File conflict detected for {device_type} device: {filename}")
-        
+
         # Check if we already have a global action set
         if self._conflict_action_all == 'skip_all':
             return 'skip'
         elif self._conflict_action_all == 'override_all':
             return 'override'
-        
+
         print(f"\n⚠️  File conflict detected: {filename}")
         print(f"   📱 Device ({device_type}): {self._format_file_size(remote_size)}")
         print(f"   💻 Local: {self._format_file_size(local_size)}")
-        
+
         while True:
             choice = input("\nChoose action:\n  [s]kip this file\n  [sa] skip all remaining files\n  [o]verride (replace on device)\n  [oa] override all remaining files\n  [c]ancel transfer\nChoice (s/sa/o/oa/c): ").lower().strip()
-            
+
             if choice in ['s', 'skip']:
                 return 'skip'
             elif choice in ['sa', 'skip_all']:
@@ -781,7 +793,7 @@ class EldersVRCLI:
         """Format file size in human-readable format"""
         if size_bytes == 0:
             return "0 B"
-        
+
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size_bytes < 1024.0:
                 return f"{size_bytes:.1f} {unit}"
@@ -794,29 +806,29 @@ class EldersVRCLI:
             # Ensure downloads directory exists
             downloads_dir = self.config['paths']['local_downloads']
             os.makedirs(downloads_dir, exist_ok=True)
-            
+
             # Get the auth token from content manager
             token = self.content_manager.auth_token
-            
+
             if not token:
                 self.logger.error("No auth token available to create credential.json")
                 return False
-            
+
             # Create credential data
             credential_data = {
                 "token": token,
                 "username": email,
                 "password": password
             }
-            
+
             # Write to credential.json
             credential_path = os.path.join(downloads_dir, "credential.json")
             with open(credential_path, 'w') as f:
                 json.dump(credential_data, f, indent=2)
-            
+
             self.logger.info(f"Created credential.json at {credential_path}")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Failed to create credential.json: {e}")
             return False
@@ -837,7 +849,7 @@ class EldersVRCLI:
 
         # Pre-transfer conflict check - get complete file list
         local_files_to_transfer = {}
-        
+
         # Add JSON files if needed
         if not args.videos_only:
             if os.path.exists(json_path):
@@ -845,41 +857,41 @@ class EldersVRCLI:
             credential_path = f"{self.config['paths']['local_downloads']}/credential.json"
             if os.path.exists(credential_path):
                 local_files_to_transfer['credential.json'] = credential_path
-        
+
         # Add video files if needed
         if not args.json_only and os.path.exists(videos_dir):
             low_res_files = [f for f in os.listdir(videos_dir) if f.startswith('lowres_') and f.endswith('.mp4')]
             for filename in low_res_files:
                 local_files_to_transfer[filename] = os.path.join(videos_dir, filename)
-        
-        # Add image files if needed  
+
+        # Add image files if needed
         if not args.json_only and os.path.exists(images_dir):
             image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
             for ext in image_extensions:
                 for filename in glob.glob(f"{images_dir}/*.{ext}") + glob.glob(f"{images_dir}/*.{ext.upper()}"):
                     basename = os.path.basename(filename)
                     local_files_to_transfer[basename] = filename
-        
+
         # Check for conflicts with actual device contents
         files_to_skip = set()
         if local_files_to_transfer:
             conflict_check = self.adb_manager.check_transfer_conflicts(serial, local_files_to_transfer, "Master")
-            
+
             if conflict_check['conflicts']:
                 print(f"\n📋 Pre-transfer check for Master device:")
                 print(f"   • {len(conflict_check['safe_files'])} new files to transfer")
                 print(f"   • {len(conflict_check['conflicts'])} files already exist on device")
-                
+
                 print(f"\n⚠️  Files that already exist on Master device:")
                 for conflict in conflict_check['conflicts'][:10]:  # Show first 10
                     print(f"   📱 {conflict['filename']} - Device: {conflict['remote_size_formatted']} | Local: {conflict['local_size_formatted']}")
-                
+
                 if len(conflict_check['conflicts']) > 10:
                     print(f"   ... and {len(conflict_check['conflicts']) - 10} more files")
-                
+
                 while True:
                     choice = input(f"\nChoose action for ALL {len(conflict_check['conflicts'])} conflicting files:\n  [sa] skip all conflicting files\n  [oa] override all conflicting files\n  [c] cancel transfer\nChoice (sa/oa/c): ").lower().strip()
-                    
+
                     if choice in ['sa', 'skip_all']:
                         self._conflict_action_all = 'skip_all'
                         # Add conflicting files to skip list
@@ -899,14 +911,14 @@ class EldersVRCLI:
         # Transfer JSON files (new_data.json and credential.json)
         if not args.videos_only:
             progress.update_json_status(serial, 'in_progress')
-            
+
             # Transfer new_data.json (skip if user chose skip all)
             json_transferred = True
             if 'new_data.json' in files_to_skip:
                 self.logger.info("⏭️  Skipped new_data.json (skip all - already exists on device)")
             else:
                 json_transferred = self.adb_manager.push_json(serial, json_path)
-            
+
             # Transfer credential.json for master device
             credential_path = f"{self.config['paths']['local_downloads']}/credential.json"
             credential_transferred = True
@@ -919,7 +931,7 @@ class EldersVRCLI:
                         self.logger.warning("Failed to transfer credential.json to master device")
             else:
                 self.logger.warning("credential.json not found - please run 'auth' command first")
-            
+
             if json_transferred and credential_transferred:
                 file_size = os.path.getsize(json_path) if os.path.exists(json_path) else 0
                 progress.update_json_status(serial, 'completed', file_size)
@@ -933,11 +945,11 @@ class EldersVRCLI:
             all_low_res_files = [f for f in os.listdir(videos_dir) if f.startswith('lowres_') and f.endswith('.mp4')]
             # Remove files that should be skipped
             low_res_files = [f for f in all_low_res_files if f not in files_to_skip]
-            
+
             skipped_count = len(all_low_res_files) - len(low_res_files)
             if skipped_count > 0:
                 self.logger.info(f"⏭️  Skipping {skipped_count} video files that already exist on device")
-            
+
             progress.update_videos_progress(serial, 0, len(low_res_files), 'in_progress')
 
             self.logger.info(f"Transferring {len(low_res_files)} low-res videos to master device {serial}")
@@ -998,46 +1010,46 @@ class EldersVRCLI:
 
         # Pre-transfer conflict check - get complete file list
         local_files_to_transfer = {}
-        
+
         # Add JSON files if needed
         if not args.videos_only:
             if os.path.exists(json_path):
                 local_files_to_transfer['new_data.json'] = json_path
-        
+
         # Add video files if needed
         if not args.json_only and os.path.exists(videos_dir):
             high_res_files = [f for f in os.listdir(videos_dir) if f.startswith('highres_') and f.endswith('.mp4')]
             for filename in high_res_files:
                 local_files_to_transfer[filename] = os.path.join(videos_dir, filename)
-        
-        # Add image files if needed  
+
+        # Add image files if needed
         if not args.json_only and os.path.exists(images_dir):
             image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
             for ext in image_extensions:
                 for filename in glob.glob(f"{images_dir}/*.{ext}") + glob.glob(f"{images_dir}/*.{ext.upper()}"):
                     basename = os.path.basename(filename)
                     local_files_to_transfer[basename] = filename
-        
+
         # Check for conflicts with actual device contents
         files_to_skip = set()
         if local_files_to_transfer:
             conflict_check = self.adb_manager.check_transfer_conflicts(serial, local_files_to_transfer, "Slave")
-            
+
             if conflict_check['conflicts']:
                 print(f"\n📋 Pre-transfer check for Slave device:")
                 print(f"   • {len(conflict_check['safe_files'])} new files to transfer")
                 print(f"   • {len(conflict_check['conflicts'])} files already exist on device")
-                
+
                 print(f"\n⚠️  Files that already exist on Slave device:")
                 for conflict in conflict_check['conflicts'][:10]:  # Show first 10
                     print(f"   🥽 {conflict['filename']} - Device: {conflict['remote_size_formatted']} | Local: {conflict['local_size_formatted']}")
-                
+
                 if len(conflict_check['conflicts']) > 10:
                     print(f"   ... and {len(conflict_check['conflicts']) - 10} more files")
-                
+
                 while True:
                     choice = input(f"\nChoose action for ALL {len(conflict_check['conflicts'])} conflicting files:\n  [sa] skip all conflicting files\n  [oa] override all conflicting files\n  [c] cancel transfer\nChoice (sa/oa/c): ").lower().strip()
-                    
+
                     if choice in ['sa', 'skip_all']:
                         self._conflict_action_all = 'skip_all'
                         # Add conflicting files to skip list
@@ -1135,7 +1147,7 @@ class EldersVRCLI:
                 return 1
 
             self.logger.info("Authentication successful")
-            
+
             # Create credential.json for master device transfer
             self._create_credential_json(email, password)
 
@@ -1243,7 +1255,9 @@ class EldersVRCLI:
         download_parser = subparsers.add_parser('download-videos', help='Download all video files')
         download_parser.add_argument('--quality', choices=['high', 'low', 'both'],
                                    default='both', help='Video quality to download')
-        download_parser.add_argument('--sequential', action='store_true', 
+        download_parser.add_argument('--images-only', action='store_true',
+                                   help='Download only images and thumbnails (no videos)')
+        download_parser.add_argument('--sequential', action='store_true',
                                    help='Use sequential downloads instead of parallel')
         download_parser.add_argument('--max-workers', type=int, metavar='N',
                                    help='Maximum number of concurrent downloads (overrides config)')
@@ -1272,7 +1286,7 @@ class EldersVRCLI:
         deploy_parser.add_argument('--skip-auth', action='store_true', help='Skip authentication')
         deploy_parser.add_argument('--skip-fetch', action='store_true', help='Skip data fetching')
         deploy_parser.add_argument('--skip-download', action='store_true', help='Skip asset download')
-        
+
         # List directories command
         list_dir_parser = subparsers.add_parser('list-directories', help='List and compare EldersVR directories on devices')
         list_dir_group = list_dir_parser.add_mutually_exclusive_group()
