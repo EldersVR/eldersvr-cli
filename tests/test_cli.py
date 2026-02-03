@@ -481,11 +481,22 @@ SLAVE456\tdevice product:quest model:Quest device:hollywood
         self.assertTrue(result)
 
     @patch('subprocess.run')
-    def test_preflight_devices_fail_disconnected(self, mock_run):
-        """Preflight devices check fails when a device is missing"""
+    def test_preflight_devices_warn_one_disconnected(self, mock_run):
+        """Preflight devices check warns but passes when one device is missing"""
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = """List of devices attached
 MASTER123\tdevice product:phone model:SM device:beyond
+"""
+        self.cli._ensure_managers_initialized()
+
+        result = self.cli._preflight_check(['devices'])
+        self.assertTrue(result)
+
+    @patch('subprocess.run')
+    def test_preflight_devices_fail_all_disconnected(self, mock_run):
+        """Preflight devices check fails when all configured devices are missing"""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = """List of devices attached
 """
         self.cli._ensure_managers_initialized()
 

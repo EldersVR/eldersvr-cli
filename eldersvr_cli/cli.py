@@ -311,19 +311,26 @@ class EldersVRCLI:
                 try:
                     connected = self.adb_manager.get_connected_devices()
                     connected_serials = [d['serial'] for d in connected]
+                    disconnected_count = 0
 
                     if master:
                         if master in connected_serials:
                             self.logger.info(f"[PASS] Master device {master} connected")
                         else:
-                            self.logger.error(f"[FAIL] Master device {master} not connected")
-                            all_passed = False
+                            self.logger.warning(f"[WARN] Master device {master} not connected")
+                            disconnected_count += 1
                     if slave:
                         if slave in connected_serials:
                             self.logger.info(f"[PASS] Slave device {slave} connected")
                         else:
-                            self.logger.error(f"[FAIL] Slave device {slave} not connected")
-                            all_passed = False
+                            self.logger.warning(f"[WARN] Slave device {slave} not connected")
+                            disconnected_count += 1
+
+                    # Count how many devices are configured
+                    configured_count = bool(master) + bool(slave)
+                    if disconnected_count >= configured_count:
+                        self.logger.error("[FAIL] No configured devices are connected")
+                        all_passed = False
                 except Exception as e:
                     self.logger.error(f"[FAIL] Device check failed: {e}")
                     all_passed = False
