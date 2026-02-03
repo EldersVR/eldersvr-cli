@@ -64,10 +64,12 @@ class ContentManager:
             return False
 
         auth_endpoint = f"{self.config['backend']['api_url']}{self.config['backend']['auth_endpoint']}"
+
+        # API expects only one identifier field - never both
         auth_data = {"password": password}
         if username:
             auth_data["username"] = username
-        if email:
+        elif email:
             auth_data["email"] = email
 
         try:
