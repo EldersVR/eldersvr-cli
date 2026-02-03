@@ -15,6 +15,7 @@
     "slave_serial": ""
   },
   "auth": {
+    "username": "",
     "email": "clionboarding@eldervr.com",
     "password": "clionboarding@eldervr.com"
   },

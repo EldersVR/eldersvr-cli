@@ -54,6 +54,7 @@ def get_default_config() -> Dict[str, Any]:
             "slave_serial": ""
         },
         "auth": {
+            "username": "",
             "email": "clionboarding@eldervr.com",
             "password": "clionboarding@eldervr.com"
         }

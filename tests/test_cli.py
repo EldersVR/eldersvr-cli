@@ -214,5 +214,292 @@ XYZ789GHI012	device product:quest model:Meta_Quest_2 device:hollywood
         self.assertTrue(any("Missing required key: lastModified" in issue for issue in issues))
 
 
+class TestConfigValidation(unittest.TestCase):
+    """Test enhanced configuration validation"""
+
+    def setUp(self):
+        from eldersvr_cli.cli import EldersVRCLI
+        self.cli = EldersVRCLI()
+        self.cli.config = get_default_config()
+
+    def test_valid_config_passes(self):
+        """Valid default config should have no issues"""
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertEqual(len(issues), 0)
+
+    def test_invalid_api_url_format(self):
+        """api_url without http(s):// should fail"""
+        self.cli.config['backend']['api_url'] = 'ftp://bad.url.com'
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertTrue(any('api_url' in i for i in issues))
+
+    def test_invalid_endpoint_format(self):
+        """Endpoints not starting with / should fail"""
+        self.cli.config['backend']['auth_endpoint'] = 'no-slash'
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertTrue(any('auth_endpoint' in i for i in issues))
+
+    def test_empty_device_path(self):
+        """Empty device_path should fail"""
+        self.cli.config['paths']['device_path'] = ''
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertTrue(any('device_path' in i for i in issues))
+
+    def test_invalid_download_settings(self):
+        """Negative/zero download settings should fail"""
+        self.cli.config['download'] = {
+            'max_concurrent_downloads': 0,
+            'timeout': -1,
+            'retry_attempts': -1
+        }
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertTrue(any('max_concurrent_downloads' in i for i in issues))
+        self.assertTrue(any('timeout' in i for i in issues))
+        self.assertTrue(any('retry_attempts' in i for i in issues))
+
+    def test_missing_auth_identifier(self):
+        """Empty both username and email should fail"""
+        self.cli.config['auth']['username'] = ''
+        self.cli.config['auth']['email'] = ''
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertTrue(any('username or email' in i for i in issues))
+
+    def test_auth_username_only_passes(self):
+        """Having only username (no email) should pass"""
+        self.cli.config['auth']['username'] = 'mycompany'
+        self.cli.config['auth']['email'] = ''
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertFalse(any('username or email' in i for i in issues))
+
+    def test_auth_email_only_passes(self):
+        """Having only email (no username) should pass"""
+        self.cli.config['auth']['username'] = ''
+        self.cli.config['auth']['email'] = 'user@example.com'
+        issues = self.cli._validate_config(self.cli.config)
+        self.assertFalse(any('username or email' in i for i in issues))
+
+
+class TestContentManagerValidation(unittest.TestCase):
+    """Test ContentManager validation methods"""
+
+    def setUp(self):
+        self.config = get_default_config()
+        self.cm = ContentManager(self.config)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_check_api_connectivity_success(self, mock_load):
+        """API connectivity check returns True when reachable"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        self.cm.session.get = Mock(return_value=mock_response)
+
+        reachable, msg = self.cm.check_api_connectivity()
+        self.assertTrue(reachable)
+        self.assertIn('reachable', msg)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_check_api_connectivity_connection_error(self, mock_load):
+        """API connectivity check returns False on connection error"""
+        import requests
+        self.cm.session.get = Mock(side_effect=requests.ConnectionError("refused"))
+
+        reachable, msg = self.cm.check_api_connectivity()
+        self.assertFalse(reachable)
+        self.assertIn('Cannot connect', msg)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_check_api_connectivity_timeout(self, mock_load):
+        """API connectivity check returns False on timeout"""
+        import requests
+        self.cm.session.get = Mock(side_effect=requests.Timeout("timed out"))
+
+        reachable, msg = self.cm.check_api_connectivity()
+        self.assertFalse(reachable)
+        self.assertIn('timed out', msg)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_validate_token_no_token(self, mock_load):
+        """Token validation fails when no token is stored"""
+        self.cm.auth_token = None
+        valid, msg = self.cm.validate_token()
+        self.assertFalse(valid)
+        self.assertIn('No auth token', msg)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_validate_token_valid(self, mock_load):
+        """Token validation succeeds with 200 response"""
+        self.cm.auth_token = 'valid-token'
+        mock_response = Mock()
+        mock_response.status_code = 200
+        self.cm.session.get = Mock(return_value=mock_response)
+
+        valid, msg = self.cm.validate_token()
+        self.assertTrue(valid)
+        self.assertIn('valid', msg)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_validate_token_expired(self, mock_load):
+        """Token validation fails with 401 response"""
+        self.cm.auth_token = 'expired-token'
+        mock_response = Mock()
+        mock_response.status_code = 401
+        self.cm.session.get = Mock(return_value=mock_response)
+
+        valid, msg = self.cm.validate_token()
+        self.assertFalse(valid)
+        self.assertIn('expired', msg)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_validate_token_forbidden(self, mock_load):
+        """Token validation fails with 403 response"""
+        self.cm.auth_token = 'bad-token'
+        mock_response = Mock()
+        mock_response.status_code = 403
+        self.cm.session.get = Mock(return_value=mock_response)
+
+        valid, msg = self.cm.validate_token()
+        self.assertFalse(valid)
+        self.assertIn('expired', msg)
+
+
+class TestPreflightCheck(unittest.TestCase):
+    """Test CLI preflight check orchestration"""
+
+    def setUp(self):
+        from eldersvr_cli.cli import EldersVRCLI
+        self.cli = EldersVRCLI()
+        self.cli.config = get_default_config()
+        self.cli.config['devices'] = {
+            'master_serial': 'MASTER123',
+            'slave_serial': 'SLAVE456'
+        }
+
+    def test_preflight_config_pass(self):
+        """Preflight config check passes with valid config"""
+        result = self.cli._preflight_check(['config'])
+        self.assertTrue(result)
+
+    def test_preflight_config_fail(self):
+        """Preflight config check fails with invalid config"""
+        self.cli.config['backend']['api_url'] = 'invalid-url'
+        result = self.cli._preflight_check(['config'])
+        self.assertFalse(result)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_preflight_api_pass(self, mock_load):
+        """Preflight API check passes when reachable"""
+        mock_cm = Mock()
+        mock_cm.check_api_connectivity.return_value = (True, "API reachable")
+        self.cli.content_manager = mock_cm
+
+        result = self.cli._preflight_check(['api'])
+        self.assertTrue(result)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_preflight_api_fail(self, mock_load):
+        """Preflight API check fails when unreachable"""
+        mock_cm = Mock()
+        mock_cm.check_api_connectivity.return_value = (False, "Cannot connect")
+        self.cli.content_manager = mock_cm
+
+        result = self.cli._preflight_check(['api'])
+        self.assertFalse(result)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_preflight_auth_pass(self, mock_load):
+        """Preflight auth check passes with valid token"""
+        mock_cm = Mock()
+        mock_cm.check_api_connectivity.return_value = (True, "API reachable")
+        mock_cm.validate_token.return_value = (True, "Token valid")
+        self.cli.content_manager = mock_cm
+
+        result = self.cli._preflight_check(['auth'])
+        self.assertTrue(result)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_preflight_auth_fail_expired(self, mock_load):
+        """Preflight auth check fails with expired token"""
+        mock_cm = Mock()
+        mock_cm.check_api_connectivity.return_value = (True, "API reachable")
+        mock_cm.validate_token.return_value = (False, "Token expired")
+        self.cli.content_manager = mock_cm
+
+        result = self.cli._preflight_check(['auth'])
+        self.assertFalse(result)
+
+    @patch.object(ContentManager, '_load_stored_token')
+    def test_preflight_auth_skipped_when_api_unreachable(self, mock_load):
+        """Auth check is skipped when API is unreachable"""
+        mock_cm = Mock()
+        mock_cm.check_api_connectivity.return_value = (False, "Cannot connect")
+        self.cli.content_manager = mock_cm
+
+        result = self.cli._preflight_check(['auth'])
+        self.assertFalse(result)
+        # validate_token should not be called since API is down
+        mock_cm.validate_token.assert_not_called()
+
+    def test_preflight_data_pass(self):
+        """Preflight data check passes with valid new_data.json"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.cli.config['paths']['local_downloads'] = temp_dir
+            json_file = os.path.join(temp_dir, 'new_data.json')
+            valid_data = {
+                "lastModified": "01/01/2026",
+                "videos": [],
+                "tags": []
+            }
+            with open(json_file, 'w') as f:
+                json.dump(valid_data, f)
+
+            mock_cm = Mock()
+            mock_cm.validate_json_data.return_value = []
+            self.cli.content_manager = mock_cm
+
+            result = self.cli._preflight_check(['data'])
+            self.assertTrue(result)
+
+    def test_preflight_data_fail_missing(self):
+        """Preflight data check fails when new_data.json is missing"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.cli.config['paths']['local_downloads'] = temp_dir
+            result = self.cli._preflight_check(['data'])
+            self.assertFalse(result)
+
+    @patch('subprocess.run')
+    def test_preflight_devices_pass(self, mock_run):
+        """Preflight devices check passes when devices are connected"""
+        # First call: adb version check, second: adb devices
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = """List of devices attached
+MASTER123\tdevice product:phone model:SM device:beyond
+SLAVE456\tdevice product:quest model:Quest device:hollywood
+"""
+        self.cli._ensure_managers_initialized()
+
+        result = self.cli._preflight_check(['devices'])
+        self.assertTrue(result)
+
+    @patch('subprocess.run')
+    def test_preflight_devices_fail_disconnected(self, mock_run):
+        """Preflight devices check fails when a device is missing"""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = """List of devices attached
+MASTER123\tdevice product:phone model:SM device:beyond
+"""
+        self.cli._ensure_managers_initialized()
+
+        result = self.cli._preflight_check(['devices'])
+        self.assertFalse(result)
+
+    def test_preflight_devices_fail_none_configured(self):
+        """Preflight devices check fails when no devices configured"""
+        self.cli.config['devices'] = {'master_serial': '', 'slave_serial': ''}
+        self.cli._ensure_managers_initialized()
+
+        result = self.cli._preflight_check(['devices'])
+        self.assertFalse(result)
+
+
 if __name__ == '__main__':
     unittest.main()

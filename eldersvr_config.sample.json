@@ -16,8 +16,8 @@
   },
   "auth": {
     "username": "",
-    "email": "Testcomplolo",
-    "password": "comppassword"
+    "email": "user@example.com",
+    "password": "password123"
   },
   "download": {
     "max_concurrent_downloads": 4,

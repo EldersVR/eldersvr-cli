@@ -172,6 +172,17 @@ class EldersVRCLI:
                 if key not in config['backend']:
                     issues.append(f"Missing required backend key: {key}")
 
+            # Validate api_url format
+            api_url = config['backend'].get('api_url', '')
+            if api_url and not api_url.startswith(('http://', 'https://')):
+                issues.append(f"Invalid api_url format: must start with http:// or https://")
+
+            # Validate endpoints start with /
+            for ep_key in ['auth_endpoint', 'tags_endpoint', 'films_endpoint']:
+                ep_val = config['backend'].get(ep_key, '')
+                if ep_val and not ep_val.startswith('/'):
+                    issues.append(f"Invalid {ep_key}: must start with /")
+
         # Paths validation
         if 'paths' in config:
             required_path_keys = ['local_downloads', 'device_path', 'json_filename']
@@ -179,14 +190,150 @@ class EldersVRCLI:
                 if key not in config['paths']:
                     issues.append(f"Missing required paths key: {key}")
 
+            if not config['paths'].get('device_path'):
+                issues.append("device_path must not be empty")
+
         # Auth validation
         if 'auth' in config:
-            if not config['auth'].get('email'):
-                issues.append("Missing or empty auth email")
+            has_username = bool(config['auth'].get('username'))
+            has_email = bool(config['auth'].get('email'))
+            if not has_username and not has_email:
+                issues.append("Auth requires at least one of: username or email")
             if not config['auth'].get('password'):
                 issues.append("Missing or empty auth password")
 
+        # Download settings validation
+        if 'download' in config:
+            dl = config['download']
+            if dl.get('max_concurrent_downloads') is not None and dl['max_concurrent_downloads'] < 1:
+                issues.append("max_concurrent_downloads must be >= 1")
+            if dl.get('timeout') is not None and dl['timeout'] < 1:
+                issues.append("download timeout must be >= 1")
+            if dl.get('retry_attempts') is not None and dl['retry_attempts'] < 0:
+                issues.append("retry_attempts must be >= 0")
+
         return issues
+
+    def _preflight_check(self, checks: List[str]) -> bool:
+        """Run preflight validation checks before a command.
+
+        Args:
+            checks: List of check names to run. Options:
+                'config' - Validate configuration completeness and values
+                'api'    - Test API connectivity
+                'auth'   - Verify auth token is valid (includes api check)
+                'data'   - Validate local new_data.json exists and is valid
+                'devices'- Verify configured devices are connected
+
+        Returns:
+            True if all checks passed, False otherwise.
+        """
+        if not self.config:
+            self.load_config()
+
+        all_passed = True
+        self.logger.info("Running preflight checks...")
+
+        # Config check
+        if 'config' in checks:
+            config_issues = self._validate_config(self.config)
+            if config_issues:
+                self.logger.error("[FAIL] Configuration validation:")
+                for issue in config_issues:
+                    self.logger.error(f"       - {issue}")
+                all_passed = False
+            else:
+                self.logger.info("[PASS] Configuration valid")
+
+        # API connectivity check
+        if 'api' in checks or 'auth' in checks:
+            if not self.content_manager:
+                self.content_manager = ContentManager(self.config)
+            reachable, msg = self.content_manager.check_api_connectivity()
+            if not reachable:
+                self.logger.error(f"[FAIL] {msg}")
+                all_passed = False
+                # If API is unreachable, skip auth check since it depends on API
+                if 'auth' in checks:
+                    self.logger.error("[SKIP] Auth validation skipped (API unreachable)")
+                return all_passed
+            else:
+                self.logger.info(f"[PASS] {msg}")
+
+        # Auth token check
+        if 'auth' in checks:
+            if not self.content_manager:
+                self.content_manager = ContentManager(self.config)
+            valid, msg = self.content_manager.validate_token()
+            if not valid:
+                self.logger.error(f"[FAIL] {msg}")
+                all_passed = False
+            else:
+                self.logger.info(f"[PASS] {msg}")
+
+        # Local data check
+        if 'data' in checks:
+            json_file = os.path.join(
+                self.config['paths']['local_downloads'],
+                self.config['paths']['json_filename']
+            )
+            if not os.path.exists(json_file):
+                self.logger.error(f"[FAIL] {json_file} not found - run 'fetch-data' first")
+                all_passed = False
+            else:
+                try:
+                    with open(json_file, 'r') as f:
+                        data = json.load(f)
+                    if not self.content_manager:
+                        self.content_manager = ContentManager(self.config)
+                    issues = self.content_manager.validate_json_data(data)
+                    if issues:
+                        self.logger.error("[FAIL] Data validation issues:")
+                        for issue in issues:
+                            self.logger.error(f"       - {issue}")
+                        all_passed = False
+                    else:
+                        self.logger.info(f"[PASS] {json_file} is valid")
+                except (json.JSONDecodeError, IOError) as e:
+                    self.logger.error(f"[FAIL] Cannot read {json_file}: {e}")
+                    all_passed = False
+
+        # Device connectivity check
+        if 'devices' in checks:
+            self._ensure_managers_initialized()
+            master = self.config['devices'].get('master_serial', '')
+            slave = self.config['devices'].get('slave_serial', '')
+
+            if not master and not slave:
+                self.logger.error("[FAIL] No devices configured - run 'select-devices' first")
+                all_passed = False
+            else:
+                try:
+                    connected = self.adb_manager.get_connected_devices()
+                    connected_serials = [d['serial'] for d in connected]
+
+                    if master:
+                        if master in connected_serials:
+                            self.logger.info(f"[PASS] Master device {master} connected")
+                        else:
+                            self.logger.error(f"[FAIL] Master device {master} not connected")
+                            all_passed = False
+                    if slave:
+                        if slave in connected_serials:
+                            self.logger.info(f"[PASS] Slave device {slave} connected")
+                        else:
+                            self.logger.error(f"[FAIL] Slave device {slave} not connected")
+                            all_passed = False
+                except Exception as e:
+                    self.logger.error(f"[FAIL] Device check failed: {e}")
+                    all_passed = False
+
+        if all_passed:
+            self.logger.info("All preflight checks passed")
+        else:
+            self.logger.error("Preflight checks failed - resolve issues before proceeding")
+
+        return all_passed
 
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""
@@ -207,6 +354,7 @@ class EldersVRCLI:
                 "slave_serial": ""
             },
             "auth": {
+                "username": "",
                 "email": "clionboarding@eldervr.com",
                 "password": "clionboarding@eldervr.com"
             }
@@ -230,18 +378,29 @@ class EldersVRCLI:
         if not self.config:
             self.load_config()
 
-        self.content_manager = ContentManager(self.config)
-
-        email = args.email or self.config['auth']['email']
-        password = args.password or self.config['auth']['password']
-
-        if not email or not password:
-            self.logger.error("Email and password are required for authentication")
+        # Preflight: validate config and API connectivity before auth attempt
+        if not self._preflight_check(['config', 'api']):
             return 1
 
-        self.logger.info(f"Authenticating with {email}...")
+        if not self.content_manager:
+            self.content_manager = ContentManager(self.config)
 
-        if self.content_manager.authenticate(email, password):
+        username = getattr(args, 'username', None) or self.config['auth'].get('username', '')
+        email = args.email or self.config['auth'].get('email', '')
+        password = args.password or self.config['auth']['password']
+
+        if not username and not email:
+            self.logger.error("Either username or email is required for authentication")
+            return 1
+
+        if not password:
+            self.logger.error("Password is required for authentication")
+            return 1
+
+        identifier = username or email
+        self.logger.info(f"Authenticating with {identifier}...")
+
+        if self.content_manager.authenticate(password, username=username, email=email):
             user_info = self.content_manager.get_user_info()
             company_info = self.content_manager.get_company_info()
 
@@ -250,7 +409,7 @@ class EldersVRCLI:
             self.logger.info(f"Company: {company_info.get('name', 'Unknown')}")
 
             # Create credential.json for master device transfer
-            self._create_credential_json(email, password)
+            self._create_credential_json(password, username=username, email=email)
 
             return 0
         else:
@@ -548,12 +707,12 @@ class EldersVRCLI:
         if not self.config:
             self.load_config()
 
+        # Preflight: validate config and auth token (which implies API connectivity)
+        if not self._preflight_check(['config', 'auth']):
+            return 1
+
         if not self.content_manager:
             self.content_manager = ContentManager(self.config)
-
-        if not self.content_manager.is_authenticated():
-            self.logger.error("Not authenticated. Please run 'auth' command first.")
-            return 1
 
         self.logger.info("Fetching tags from backend...")
         tags_data = self.content_manager.fetch_tags()
@@ -598,10 +757,11 @@ class EldersVRCLI:
         if not self.config:
             self.load_config()
 
-        json_file = f"{self.config['paths']['local_downloads']}/new_data.json"
-        if not os.path.exists(json_file):
-            self.logger.error("new_data.json not found. Please run 'fetch-data' first.")
+        # Preflight: validate config and local data
+        if not self._preflight_check(['config', 'data']):
             return 1
+
+        json_file = f"{self.config['paths']['local_downloads']}/new_data.json"
 
         try:
             with open(json_file, 'r') as f:
@@ -708,15 +868,15 @@ class EldersVRCLI:
         """Handle transfer command (CLI-only)"""
         self._ensure_managers_initialized()
 
+        # Preflight: validate config, local data, and device connectivity
+        if not self._preflight_check(['config', 'data', 'devices']):
+            return 1
+
         # Reset conflict action state for this transfer
         self._conflict_action_all = None
 
         master_serial = self.config['devices']['master_serial']
         slave_serial = self.config['devices']['slave_serial']
-
-        if not master_serial and not slave_serial:
-            self.logger.error("No devices configured. Please run 'select-devices' first.")
-            return 1
 
         # Initialize progress tracker
         progress = TransferProgress()
@@ -800,7 +960,7 @@ class EldersVRCLI:
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} TB"
 
-    def _create_credential_json(self, email: str, password: str) -> bool:
+    def _create_credential_json(self, password: str, username: str = '', email: str = '') -> bool:
         """Create credential.json file with authentication data for master device"""
         try:
             # Ensure downloads directory exists
@@ -817,7 +977,8 @@ class EldersVRCLI:
             # Create credential data
             credential_data = {
                 "token": token,
-                "username": email,
+                "username": username,
+                "email": email,
                 "password": password
             }
 
@@ -1131,6 +1292,16 @@ class EldersVRCLI:
         # Step 1: Ensure managers initialized
         self._ensure_managers_initialized()
 
+        # Preflight: validate config, API, and devices before starting pipeline
+        preflight_checks = ['config']
+        if not args.skip_auth:
+            preflight_checks.append('api')
+        if self.config['devices'].get('master_serial') or self.config['devices'].get('slave_serial'):
+            preflight_checks.append('devices')
+
+        if not self._preflight_check(preflight_checks):
+            return 1
+
         # Step 2: Verify ADB
         if not self.adb_manager.verify_adb_available():
             self.logger.error("ADB not available. Please install ADB and add to PATH.")
@@ -1139,17 +1310,18 @@ class EldersVRCLI:
         # Step 3: Authenticate
         if not args.skip_auth:
             self.content_manager = ContentManager(self.config)
-            email = self.config['auth']['email']
+            username = self.config['auth'].get('username', '')
+            email = self.config['auth'].get('email', '')
             password = self.config['auth']['password']
 
-            if not self.content_manager.authenticate(email, password):
+            if not self.content_manager.authenticate(password, username=username, email=email):
                 self.logger.error("Authentication failed")
                 return 1
 
             self.logger.info("Authentication successful")
 
             # Create credential.json for master device transfer
-            self._create_credential_json(email, password)
+            self._create_credential_json(password, username=username, email=email)
 
         # Step 4: Fetch data
         if not args.skip_fetch:
@@ -1233,7 +1405,8 @@ class EldersVRCLI:
 
         # Auth command
         auth_parser = subparsers.add_parser('auth', help='Authenticate with backend')
-        auth_parser.add_argument('--email', help='Email for authentication')
+        auth_parser.add_argument('--username', help='Username for authentication (alternative to email)')
+        auth_parser.add_argument('--email', help='Email for authentication (alternative to username)')
         auth_parser.add_argument('--password', help='Password for authentication')
 
         # Logout command

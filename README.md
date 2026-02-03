@@ -80,11 +80,14 @@ eldersvr-onboard --verbose <command>
 
 ### Authentication
 ```bash
-# Authenticate with default credentials
+# Authenticate with default credentials (from config)
 eldersvr-onboard auth
 
-# Authenticate with custom credentials
+# Authenticate with email
 eldersvr-onboard auth --email your@email.com --password yourpass
+
+# Authenticate with username (alternative to email)
+eldersvr-onboard auth --username "Acme Corporation" --password yourpass
 
 # Clear stored authentication
 eldersvr-onboard logout
@@ -214,7 +217,7 @@ eldersvr-onboard verify --device ABC123           # Verify specific device
 
 | Command | Description | Key Options |
 |---------|-------------|-------------|
-| `auth` | Authenticate with backend | `--email`, `--password` |
+| `auth` | Authenticate with backend | `--username`, `--email`, `--password` |
 | `logout` | Clear stored authentication | None |
 | `list-devices` | List connected ADB devices | None |
 | `select-devices` | Configure master/slave devices | `--master`, `--slave` |
@@ -270,7 +273,7 @@ eldersvr-onboard --verbose transfer --master-only --videos-only
 ## Configuration
 
 ### Default Configuration
-The CLI uses the following default configuration:
+The CLI uses the following default configuration. See `eldersvr_config.sample.json` for a complete example.
 
 ```json
 {
@@ -286,14 +289,30 @@ The CLI uses the following default configuration:
     "json_filename": "new_data.json"
   },
   "auth": {
+    "username": "",
     "email": "clionboarding@eldervr.com",
     "password": "clionboarding@eldervr.com"
+  },
+  "download": {
+    "max_concurrent_downloads": 4,
+    "chunk_size": 8192,
+    "timeout": 60,
+    "retry_attempts": 3,
+    "retry_delay": 1.0
   }
 }
 ```
 
+> **Auth note:** Provide either `username` or `email` (at least one is required). You do not need both.
+
 ### Custom Configuration
-Create `eldersvr_config.json` in your working directory:
+Create `eldersvr_config.json` in your working directory or copy the sample:
+
+```bash
+cp eldersvr_config.sample.json eldersvr_config.json
+```
+
+Then edit as needed:
 
 ```json
 {
@@ -301,11 +320,25 @@ Create `eldersvr_config.json` in your working directory:
     "api_url": "https://your-api.com"
   },
   "auth": {
-    "email": "your@email.com",
+    "username": "Acme Corporation",
     "password": "yourpassword"
   }
 }
 ```
+
+### Preflight Validation
+
+Before executing commands, the CLI runs automatic preflight checks to catch issues early:
+
+| Command | Checks |
+|---------|--------|
+| `auth` | Config validity, API connectivity |
+| `fetch-data` | Config validity, API connectivity, auth token |
+| `download-videos` | Config validity, local data (new_data.json) |
+| `transfer` | Config validity, local data, device connectivity |
+| `deploy` | Config validity, API connectivity, device connectivity |
+
+Checks print clear `[PASS]`/`[FAIL]` status before proceeding.
 
 ## Device Deployment Architecture
 
@@ -406,8 +439,10 @@ Mobile app users **cannot**:
 # 1. Check if ADB devices are connected
 eldersvr-onboard list-devices
 
-# 2. Authenticate with backend
+# 2. Authenticate with backend (use email or username)
 eldersvr-onboard auth --email admin@eldersvr.com --password mypassword
+# or
+eldersvr-onboard auth --username "My Company" --password mypassword
 
 # 3. Select your devices
 eldersvr-onboard select-devices --master ABC123 --slave XYZ789
@@ -579,8 +614,9 @@ eldersvr-onboard transfer --retry-failed
 
 **Authentication failures**:
 ```bash
-# Verify credentials
+# Verify credentials (with email or username)
 eldersvr-onboard auth --email your@email.com --password yourpass
+eldersvr-onboard auth --username "Your Company" --password yourpass
 # Check network connectivity
 # Verify API endpoint accessibility
 ```
@@ -688,3 +724,4 @@ For issues and support, please visit: https://github.com/EldersVR/eldersvr-cli/i
 - **v1.5.0**: Updated to use app-specific Android directories
 - **v1.6.0**: Enhanced file conflict resolution for transfers (interactive skip/override prompts)
 - **v1.7.0**: Fixed directory handling, removed cleanup, added skip all/override all options
+- **v1.8.0**: Preflight validation chain (config, API, auth, data, devices), username/email auth support, sample config

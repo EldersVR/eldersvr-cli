@@ -50,13 +50,25 @@ class ContentManager:
         # Load existing token if available
         self._load_stored_token()
 
-    def authenticate(self, email: str, password: str) -> bool:
-        """Authenticate with EldersVR backend API"""
+    def authenticate(self, password: str, username: str = '', email: str = '') -> bool:
+        """Authenticate with EldersVR backend API.
+
+        Args:
+            password: Account password.
+            username: Username for authentication (alternative to email).
+            email: Email for authentication (alternative to username).
+            At least one of username or email must be provided.
+        """
+        if not username and not email:
+            print("Authentication failed: either username or email is required")
+            return False
+
         auth_endpoint = f"{self.config['backend']['api_url']}{self.config['backend']['auth_endpoint']}"
-        auth_data = {
-            "email": email,
-            "password": password
-        }
+        auth_data = {"password": password}
+        if username:
+            auth_data["username"] = username
+        if email:
+            auth_data["email"] = email
 
         try:
             response = self.session.post(auth_endpoint, json=auth_data, timeout=30)
@@ -88,8 +100,47 @@ class ContentManager:
             return False
 
     def is_authenticated(self) -> bool:
-        """Check if currently authenticated"""
+        """Check if currently authenticated (token exists locally)"""
         return self.auth_token is not None
+
+    def check_api_connectivity(self) -> Tuple[bool, str]:
+        """Check if the backend API is reachable.
+        Returns (reachable, message).
+        """
+        api_url = self.config['backend']['api_url']
+        try:
+            response = self.session.get(api_url, timeout=10)
+            return True, f"API reachable ({api_url})"
+        except requests.ConnectionError:
+            return False, f"Cannot connect to API at {api_url} - check network or URL"
+        except requests.Timeout:
+            return False, f"API connection timed out ({api_url})"
+        except requests.RequestException as e:
+            return False, f"API connectivity check failed: {e}"
+
+    def validate_token(self) -> Tuple[bool, str]:
+        """Actively validate the stored auth token against the API.
+        Makes a lightweight request to verify the token is still accepted.
+        Returns (is_valid, message).
+        """
+        if not self.auth_token:
+            return False, "No auth token stored - please run 'auth' command"
+
+        tags_endpoint = f"{self.config['backend']['api_url']}{self.config['backend']['tags_endpoint']}"
+        try:
+            response = self.session.get(tags_endpoint, timeout=15)
+            if response.status_code == 200:
+                return True, "Auth token is valid"
+            elif response.status_code in (401, 403):
+                return False, "Auth token expired or invalid - please run 'auth' command"
+            else:
+                return False, f"Unexpected API response (status {response.status_code}) during token validation"
+        except requests.ConnectionError:
+            return False, "Cannot reach API to validate token - check network"
+        except requests.Timeout:
+            return False, "API request timed out during token validation"
+        except requests.RequestException as e:
+            return False, f"Token validation failed: {e}"
 
     def fetch_tags(self) -> Optional[List[Dict[str, Any]]]:
         """Fetch available tags from backend"""
