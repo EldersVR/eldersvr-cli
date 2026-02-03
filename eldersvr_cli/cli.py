@@ -386,8 +386,14 @@ class EldersVRCLI:
             self.content_manager = ContentManager(self.config)
 
         username = getattr(args, 'username', None) or self.config['auth'].get('username', '')
-        email = args.email or self.config['auth'].get('email', '')
+        email = getattr(args, 'email', None) or self.config['auth'].get('email', '')
         password = args.password or self.config['auth']['password']
+
+        # User should fill just one: username or email. Prioritize username.
+        if username:
+            email = ''
+        elif email:
+            username = ''
 
         if not username and not email:
             self.logger.error("Either username or email is required for authentication")
@@ -974,13 +980,12 @@ class EldersVRCLI:
                 self.logger.error("No auth token available to create credential.json")
                 return False
 
-            # Create credential data
-            credential_data = {
-                "token": token,
-                "username": username,
-                "email": email,
-                "password": password
-            }
+            # Create credential data - only include the identifier that was used
+            credential_data = {"token": token, "password": password}
+            if username:
+                credential_data["username"] = username
+            if email:
+                credential_data["email"] = email
 
             # Write to credential.json
             credential_path = os.path.join(downloads_dir, "credential.json")
@@ -1313,6 +1318,12 @@ class EldersVRCLI:
             username = self.config['auth'].get('username', '')
             email = self.config['auth'].get('email', '')
             password = self.config['auth']['password']
+
+            # User should fill just one: username or email. Prioritize username.
+            if username:
+                email = ''
+            elif email:
+                username = ''
 
             if not self.content_manager.authenticate(password, username=username, email=email):
                 self.logger.error("Authentication failed")
