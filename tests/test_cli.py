@@ -351,15 +351,15 @@ class TestContentManagerValidation(unittest.TestCase):
 
     @patch.object(ContentManager, '_load_stored_token')
     def test_validate_token_forbidden(self, mock_load):
-        """Token validation fails with 403 response"""
-        self.cm.auth_token = 'bad-token'
+        """Token validation passes with 403 (token recognized but limited permissions)"""
+        self.cm.auth_token = 'valid-token'
         mock_response = Mock()
         mock_response.status_code = 403
         self.cm.session.get = Mock(return_value=mock_response)
 
         valid, msg = self.cm.validate_token()
-        self.assertFalse(valid)
-        self.assertIn('expired', msg)
+        self.assertTrue(valid)
+        self.assertIn('limited permissions', msg)
 
 
 class TestPreflightCheck(unittest.TestCase):

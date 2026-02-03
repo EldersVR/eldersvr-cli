@@ -131,12 +131,18 @@ class ContentManager:
         tags_endpoint = f"{self.config['backend']['api_url']}{self.config['backend']['tags_endpoint']}"
         try:
             response = self.session.get(tags_endpoint, timeout=15)
-            if response.status_code == 200:
+            if 200 <= response.status_code < 300:
                 return True, "Auth token is valid"
-            elif response.status_code in (401, 403):
+            elif response.status_code == 401:
                 return False, "Auth token expired or invalid - please run 'auth' command"
+            elif response.status_code == 403:
+                # 403 means the token is recognized but lacks permission for this endpoint
+                # Token itself is still valid
+                return True, "Auth token is valid (limited permissions)"
             else:
-                return False, f"Unexpected API response (status {response.status_code}) during token validation"
+                # For other errors (404, 500, etc.) don't block the user -
+                # the token may still be valid, let the actual command try
+                return True, f"Auth token present (endpoint returned {response.status_code}, will retry on actual request)"
         except requests.ConnectionError:
             return False, "Cannot reach API to validate token - check network"
         except requests.Timeout:
