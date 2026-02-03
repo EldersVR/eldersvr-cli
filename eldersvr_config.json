@@ -16,7 +16,7 @@
   },
   "auth": {
     "username": "Testcomplolo",
-    "password": "comppassword"
+    "password": "testpassword"
   },
   "download": {
     "max_concurrent_downloads": 4,

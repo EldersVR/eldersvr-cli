@@ -658,7 +658,7 @@ class ContentManager:
 
     def _store_token(self):
         """Store authentication token to disk"""
-        if self.auth_token and self.user_info and self.company_info:
+        if self.auth_token:
             token_data = {
                 "token": self.auth_token,
                 "user_info": self.user_info,
