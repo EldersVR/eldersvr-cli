@@ -15,9 +15,8 @@
     "slave_serial": ""
   },
   "auth": {
-    "username": "",
-    "email": "user@example.com",
-    "password": "password123"
+    "username": "your_company_name",
+    "password": "your_password"
   },
   "download": {
     "max_concurrent_downloads": 4,

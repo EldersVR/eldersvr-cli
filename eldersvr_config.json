@@ -15,8 +15,7 @@
     "slave_serial": ""
   },
   "auth": {
-    "username": "",
-    "email": "Testcomplolo",
+    "username": "Testcomplolo",
     "password": "comppassword"
   },
   "download": {
